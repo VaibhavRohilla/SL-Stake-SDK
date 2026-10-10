@@ -303,3 +303,120 @@ it('reentrant destroy from injected journal cannot dispatch or create false paid
   await expect(client.play(wager)).rejects.toMatchObject({ category: 'LIFECYCLE', dispatch: 'NOT_DISPATCHED' });
   expect(network.calls).toHaveLength(1); expect(items.size).toBe(0); expect(client.session).toBeUndefined();
 });
+
+describe('hostile audit dispatch and policy regressions', () => {
+  const secret = 'fake-session-do-not-publish';
+  const foreignErrors = [
+    new StakeSdkError({ category: 'TRANSPORT', code: 'NETWORK_FAILURE', dispatch: 'NOT_DISPATCHED' }, secret),
+    new StakeSdkError({ category: 'BUSINESS_REJECTION', code: 'PROVIDER_REJECTION', dispatch: 'RESPONSE_RECEIVED', providerCode: 'ERR_IPB' }, secret),
+  ];
+  it.each(foreignErrors)('external fetch errors cannot authorize another paid request: $category', async foreign => {
+    const items = new Map<string, string>();
+    const storage = { getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => { items.set(key, value); }, removeItem: (key: string) => { items.delete(key); } };
+    let paidCalls = 0;
+    const fetch: typeof globalThis.fetch = url => {
+      if (String(url).endsWith('/authenticate')) return Promise.resolve(response(auth));
+      paidCalls++; throw foreign; // Synchronous throw after fetch invocation is also possible dispatch.
+    };
+    const first = live(fetch, { pendingDispatchStorage: storage }); await first.authenticate();
+    try {
+      await first.play(wager); throw new Error('Unexpected success');
+    } catch (error) {
+      expect(error).toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', dispatch: 'MAY_HAVE_DISPATCHED',
+        failure: { reason: { category: 'TRANSPORT', code: 'NETWORK_FAILURE', dispatch: 'MAY_HAVE_DISPATCHED' } } });
+      expect(String(error)).not.toContain(secret); expect(JSON.stringify(error)).not.toContain(secret);
+    }
+    expect(first.paidDispatchStatus).toBe('AMBIGUOUS'); expect(items.size).toBe(1);
+    await expect(first.play(wager)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
+    first.destroy();
+    const restored = live(fetch, { pendingDispatchStorage: storage }); await restored.authenticate();
+    await expect(restored.play(wager)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
+    expect(paidCalls).toBe(1); expect(items.size).toBe(1); restored.destroy();
+  });
+  it.each(['EVENT', 'END_ROUND'] as const)('external rejection cannot clear %s uncertainty', async operation => {
+    let calls = 0;
+    const client = live(async () => ++calls === 1 ? response({ ...auth, round }) : Promise.reject(foreignErrors[1]));
+    await client.authenticate();
+    const mutate = () => operation === 'EVENT' ? client.recordEvent(round.betID, stakeEventId('checkpoint')) : client.endRound(round.betID);
+    await expect(mutate()).rejects.toMatchObject({ category: 'TRANSPORT', dispatch: 'MAY_HAVE_DISPATCHED' });
+    await expect(mutate()).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
+    expect(calls).toBe(2); client.destroy();
+  });
+  it.each([true, false])('body errors cannot manufacture provider rejection (synchronous=%s)', async synchronous => {
+    class HostileResponse extends Response {
+      override json(): Promise<never> {
+        if (synchronous) throw foreignErrors[1];
+        return Promise.reject(foreignErrors[1]);
+      }
+    }
+    const client = live(queue(response(auth), new HostileResponse()).fetch); await client.authenticate();
+    await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH',
+      failure: { reason: { category: 'PROTOCOL', code: 'INVALID_JSON', dispatch: 'RESPONSE_RECEIVED' } } });
+    await expect(client.play(wager)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' }); client.destroy();
+  });
+  it('validated rejection restores READY and permits only an explicit subsequent play', async () => {
+    const network = queue(response(auth), response({ error: 'ERR_IPB' }, 400), response({ ...played, round: { ...round, active: false } }),
+      response({ error: 'ERR_VAL' }, 400));
+    const client = live(network.fetch); await client.authenticate();
+    await expect(client.play(wager)).rejects.toMatchObject({ category: 'BUSINESS_REJECTION' });
+    expect(client.paidDispatchStatus).toBe('READY'); expect(network.calls).toHaveLength(2);
+    await client.play(wager); expect(client.paidDispatchStatus).toBe('CONFIRMED');
+    await expect(client.play(wager)).rejects.toMatchObject({ category: 'BUSINESS_REJECTION' });
+    expect(client.paidDispatchStatus).toBe('CONFIRMED'); expect(network.calls).toHaveLength(4); client.destroy();
+  });
+  it('journal removal failure after rejection retains a typed fence and recoverable status', async () => {
+    const items = new Map<string, string>();
+    const storage = { getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => { items.set(key, value); }, removeItem() { throw new Error(secret); } };
+    const client = live(queue(response(auth), response({ error: 'ERR_IPB' }, 400)).fetch, { pendingDispatchStorage: storage });
+    await client.authenticate();
+    await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH',
+      failure: { reason: { code: 'PENDING_STORAGE_FAILURE', dispatch: 'RESPONSE_RECEIVED' } } });
+    expect(client.paidDispatchStatus).toBe('AMBIGUOUS'); expect(items.size).toBe(1);
+    await expect(client.play(wager)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' }); client.destroy();
+  });
+  it.each([new DOMException(secret, 'OperationError'), foreignErrors[1]])('lease crypto failures are classified and sanitized', async external => {
+    vi.stubGlobal('window', {}); vi.stubGlobal('navigator', { locks: { request: vi.fn() } });
+    const digest = vi.spyOn(globalThis.crypto.subtle, 'digest').mockRejectedValue(external);
+    const client = live(queue(response(auth)).fetch, { sessionLease: { kind: 'WEB_LOCKS' } });
+    try {
+      await expect(client.authenticate()).rejects.toMatchObject({ category: 'SESSION', code: 'LEASE_UNAVAILABLE', dispatch: 'NOT_DISPATCHED', message: 'Browser session lease unavailable' });
+      expect(client.session).toBeUndefined();
+    } finally { client.destroy(); digest.mockRestore(); vi.unstubAllGlobals(); }
+  });
+});
+
+it('JSON reflection cannot spoof business rejection through a thrown SDK error', async () => {
+  const external = new StakeSdkError({ category: 'BUSINESS_REJECTION', code: 'PROVIDER_REJECTION',
+    providerCode: 'ERR_IPB', dispatch: 'RESPONSE_RECEIVED' }, 'fake-sensitive-message');
+  class HostileResponse extends Response {
+    override json() { return Promise.resolve(new Proxy({}, { getOwnPropertyDescriptor() { throw external; } })); }
+  }
+  const client = live(queue(response(auth), new HostileResponse()).fetch); await client.authenticate();
+  await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH',
+    failure: { reason: { category: 'TRANSPORT', dispatch: 'RESPONSE_RECEIVED' } } });
+  await expect(client.play(wager)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' }); client.destroy();
+});
+
+it('journal read callback cannot revive a destroyed client', async () => {
+  const network = queue(response(auth));
+  const storage = { getItem() { client.destroy(); return null; }, setItem() {}, removeItem() {} };
+  const client = live(network.fetch, { pendingDispatchStorage: storage });
+  await expect(client.authenticate()).rejects.toMatchObject({ code: 'DESTROYED' });
+  expect(network.calls).toHaveLength(0); expect(client.session).toBeUndefined();
+  expect(client.paidDispatchStatus).toBe('DESTROYED');
+  await expect(client.authenticate()).rejects.toMatchObject({ code: 'DESTROYED' });
+});
+
+it('journal clear callback during reconciliation cannot republish or reopen a destroyed client', async () => {
+  const items = new Map<string, string>();
+  const storage = { getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => { items.set(key, value); },
+    removeItem(key: string) { items.delete(key); client.destroy(); } };
+  const client = live(queue(response(auth), response({}, 500), response({ ...auth, round })).fetch, { pendingDispatchStorage: storage });
+  await client.authenticate(); await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH' });
+  await expect(client.authenticate()).rejects.toMatchObject({ code: 'DESTROYED' });
+  expect(client.session).toBeUndefined(); expect(client.paidDispatchStatus).toBe('DESTROYED');
+  await expect(client.authenticate()).rejects.toMatchObject({ code: 'DESTROYED' });
+});

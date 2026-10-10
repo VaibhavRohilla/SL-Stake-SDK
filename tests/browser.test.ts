@@ -114,3 +114,33 @@ test('browser journal survives client recreation and replay never leases', async
   });
   expect(result).toEqual({ blocked: 'RECONCILIATION_REQUIRED', requests: 1, before: 1, after: 1 }); await second.close();
 });
+
+test('native browser policy reports typed crypto/storage failures without dispatch', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const sdk: typeof import('../src/index.js') = await import(`${location.origin}/sdk/index.js`);
+    const launch = sdk.parseStakeLaunch(`?sessionID=fake-policy-failure&rgs_url=${location.origin}`, { allowHttp: true });
+    if (launch.kind !== 'LIVE') throw new Error('launch');
+    const originalDigest = crypto.subtle.digest;
+    const storageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    const failures: string[] = []; let dispatches = 0;
+    const fetchImpl: typeof fetch = async () => { dispatches++; throw new Error('unexpected dispatch'); };
+    for (const facility of ['crypto', 'storage']) {
+      const client = sdk.createStakeLiveClient({ launch, codec: { parse: () => null }, fetch: fetchImpl, sessionLease: { kind: 'WEB_LOCKS' } });
+      try {
+        if (facility === 'crypto') crypto.subtle.digest = async () => { throw new DOMException('fake-secret', 'OperationError'); };
+        else Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('fake-secret', 'SecurityError'); } });
+        try { await client.authenticate(); throw new Error('Unexpected success'); }
+        catch (error) {
+          if (!(error instanceof sdk.StakeSdkError) || error.category !== 'SESSION' || error.message.includes('fake-secret')) throw error;
+          failures.push(error.code);
+        }
+      } finally {
+        client.destroy(); crypto.subtle.digest = originalDigest;
+        if (storageDescriptor) Object.defineProperty(window, 'localStorage', storageDescriptor);
+      }
+    }
+    return { failures, dispatches };
+  });
+  expect(result).toEqual({ failures: ['LEASE_UNAVAILABLE', 'PENDING_STORAGE_FAILURE'], dispatches: 0 });
+});

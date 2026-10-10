@@ -27,7 +27,7 @@ const codec: StakeGameStateCodec<GameState> = {
 };
 ```
 
-The SDK validates the provider envelope before calling `parse`. The codec result supports exactly null, booleans, finite numbers, strings, dense arrays and plain objects with enumerable string data properties. The SDK rejects undefined, BigInt, symbols, functions, nonfinite numbers, cycles, sparse/decorated arrays, accessors, hidden properties, Date, Map, Set, ArrayBuffer, typed arrays and class instances before cloning can erase their meaning. Shared acyclic references are supported. Validated results are copied and recursively frozen; caller-owned codec output is never frozen. No raw provider JSON is returned.
+The SDK validates the provider envelope before calling `parse`. The codec result supports exactly null, booleans, finite numbers, strings, dense arrays and plain objects with enumerable string data properties. The SDK rejects undefined, BigInt, symbols, functions, nonfinite numbers, cycles, sparse/decorated arrays, accessors, hidden properties, Date, Map, Set, ArrayBuffer, typed arrays and class instances before cloning can erase their meaning. Shared acyclic references are supported. Array subclasses and arrays with custom prototypes are also rejected before cloning. Validated results are copied and recursively frozen; published state uses `StakeReadonlyState<T>` so nested objects, arrays and tuples are readonly in consumer types. Caller-owned codec output is never frozen. No raw provider JSON is returned.
 
 ## Live launch and client
 
@@ -103,11 +103,11 @@ Authentication sends exactly sessionID and normalized language, matching both of
 
 ## Uncertain dispatch and recovery
 
-Once fetch is invoked for paid play, the request may have reached Stake. Network failure, timeout, post-dispatch abort/destroy, malformed JSON/envelope or codec failure produces `AMBIGUOUS_PAID_DISPATCH`. Its discriminated `failure.reason` preserves the exact underlying category/code/dispatch facts; `failure.pending` carries the immutable reconciliation facts. The client never retries a request.
+Once fetch is invoked for paid play, the request may have reached Stake. Network failure, timeout, post-dispatch abort/destroy, malformed JSON/envelope or codec failure produces `AMBIGUOUS_PAID_DISPATCH`. Its discriminated `failure.reason` preserves the exact underlying category/code/dispatch facts; `failure.pending` carries the immutable reconciliation facts. The client never retries a request. Fetch and response-body failures are classified at their external boundary; an injected `StakeSdkError` cannot claim nonacceptance or override the request owner's dispatch phase. Only errors created by the current request retain their classification.
 
 Further mutations are blocked with `RECONCILIATION_REQUIRED`. Call `getActiveRound` or `authenticate` to inspect authoritative truth. A different provider betID matching pending amount, mode and authenticated currency can reconcile play. The previous completed round cannot resolve it. **Null round does not establish nonacceptance** and leaves the fence in place. Unresolved cases require provider/operator truth; recreating a client or clearing storage is not reconciliation.
 
-Only a validated known business rejection on HTTP 4xx proves a play was not accepted. Arbitrary 401/403 bodies, unknown codes and 5xx are not used as proof. Event and end-round uncertainty also fences further mutations; recovery requires the same round with the echoed event or explicit inactive status, respectively. No null-round inference clears end-round uncertainty.
+Only a validated known business rejection on HTTP 4xx proves a play was not accepted. A proven rejection restores the preceding resolved dispatch status; failure to clear its persistent marker retains a mutation fence. Arbitrary 401/403 bodies, unknown codes and 5xx are not used as proof. Event and end-round uncertainty also fences further mutations; recovery requires the same round with the echoed event or explicit inactive status, respectively. No null-round inference clears end-round uncertainty.
 
 With browser leasing enabled, a non-secret version-1 pending mutation marker is stored in localStorage **before dispatch**, keyed by a SHA-256 digest of provider base/session identity. It survives client destroy and tab closure; only proven rejection, validated success or matching reconciliation removes it. Credentials are not persisted. Corrupt/unavailable storage and missing/unknown journal versions fail closed without deleting the marker. No unversioned journal compatibility parser exists. Other runtimes may inject `pendingDispatchStorage` with getItem/setItem/removeItem methods. Without that option and without browser leasing, pending truth is instance-local: retain the client across uncertainty; no cross-process/reload guarantee is claimed. Persistent storage is a safety journal, not a financial ledger or provider idempotency mechanism.
 
@@ -119,7 +119,7 @@ All async operations accept `{ signal }`. The timeout (default 30 seconds) cover
 
 Session lease is **opt-in**. `{ kind: 'WEB_LOCKS' }` acquires one exclusive browser lock per provider/session within an origin before authentication, rejects another same-session client with `LEASE_CONFLICT`, and holds it until destroy or tab termination. The browser automatically releases locks when the owning context dies; there is no heartbeat TTL or stale localStorage lease to steal. No process-global lease authority is introduced. Different origins/devices are outside this policy; no client library can enforce operator-wide session exclusivity.
 
-Unsupported browser facilities fail with `LEASE_UNAVAILABLE`; Node applications leave the browser policy unset. Replay cannot enable it. Browser policy is distinct from Stake protocol.
+Missing or failing lease facilities, including Web Crypto, fail with a sanitized `LEASE_UNAVAILABLE`; a real lock collision yields `LEASE_CONFLICT`, and unavailable/corrupt journal storage yields `PENDING_STORAGE_FAILURE`; Node applications leave the browser policy unset. Replay cannot enable it. Browser policy is distinct from Stake protocol.
 
 ## Typed failures and diagnostics
 

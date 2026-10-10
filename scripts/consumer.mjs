@@ -35,6 +35,12 @@ export type ExactMode = Assert<string extends StakeBetMode ? false : true>;
 export type ExactCurrency = Assert<string extends StakeCurrencyCode ? false : true>;
 export type CurrencyOwnedBySession = Assert<'currency' extends keyof StakePlayInput ? false : true>;
 export type RequiredActiveAmount = Assert<Extract<StakeRound<number>, { active: true }>['amount'] extends StakeAmountMicros ? true : false>;
+export function installedReadonlyProof(round: StakeRound<{ nested: { value: number }; items: number[] }>): void {
+  // @ts-expect-error Installed declarations prohibit nested provider-state mutation.
+  round.state.nested.value = 2;
+  // @ts-expect-error Installed declarations prohibit array mutation.
+  round.state.items.push(1);
+}
 const codec: StakeGameStateCodec<number> = { parse(input) { if (typeof input !== 'number') throw new Error('invalid state'); return input; } };
 const balance = { amount: 10000000, currency: 'USD' };
 const config = { minBet: 1000000, maxBet: 1000000, stepBet: 1000000, defaultBetLevel: 1000000, betLevels: [1000000], jurisdiction: { socialCasino: false, disabledFullscreen: false, disabledTurbo: false, disabledSuperTurbo: false, disabledAutoplay: false, disabledSlamstop: false, disabledSpacebar: false, disabledBuyFeature: false, displayNetPosition: false, displayRTP: false, displaySessionTimer: false, minimumRoundDuration: 0 } };

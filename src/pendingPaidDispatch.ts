@@ -1,6 +1,5 @@
 import { STAKE_DISPATCH_PHASE } from './errors.js';
 import { StakeSdkError, STAKE_ERROR_CATEGORY as CATEGORY, STAKE_ERROR_CODE as CODE } from './errors.js';
-import { fields } from './protocol.js';
 import { stakeBetId, stakeBetMode, stakeEventId } from './domain.js';
 import type { StakeBetId, StakeBetMode, StakeEventId, StakeSessionId } from './domain.js';
 import { MUTATION, JOURNAL } from './vocabulary.js';
@@ -21,14 +20,21 @@ type Pending = { readonly kind: 'NONE' } | StakePendingMutation;
 const JOURNAL_VERSION = 1;
 type StakePendingDispatchRecordV1 = StakePendingMutation & { readonly version: typeof JOURNAL_VERSION };
 function parsePendingRecord(input: unknown): StakePendingMutation {
-  const value = fields(input);
-  if (value.version !== JOURNAL_VERSION) throw new Error('Unsupported pending journal version');
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid pending journal object');
+  const value = input;
+  if (!('version' in value) || value.version !== JOURNAL_VERSION) throw new Error('Unsupported pending journal version');
+  if (!('kind' in value)) throw new Error('Missing pending mutation kind');
   switch (value.kind) {
     case MUTATION.PLAY:
+      if (!('amount' in value) || !('mode' in value) || !('currency' in value) || !('previous' in value)) throw new Error('Missing play journal facts');
       return Object.freeze({ kind: MUTATION.PLAY, amount: stakeAmountMicros(value.amount), mode: stakeBetMode(value.mode),
         currency: stakeCurrencyCode(value.currency), previous: value.previous === null ? null : stakeBetId(value.previous) });
-    case MUTATION.EVENT: return Object.freeze({ kind: MUTATION.EVENT, betID: stakeBetId(value.betID), event: stakeEventId(value.event) });
-    case MUTATION.END_ROUND: return Object.freeze({ kind: MUTATION.END_ROUND, betID: stakeBetId(value.betID) });
+    case MUTATION.EVENT:
+      if (!('betID' in value) || !('event' in value)) throw new Error('Missing event journal facts');
+      return Object.freeze({ kind: MUTATION.EVENT, betID: stakeBetId(value.betID), event: stakeEventId(value.event) });
+    case MUTATION.END_ROUND:
+      if (!('betID' in value)) throw new Error('Missing end-round journal facts');
+      return Object.freeze({ kind: MUTATION.END_ROUND, betID: stakeBetId(value.betID) });
     default: throw new Error('Invalid pending marker');
   }
 }
@@ -52,13 +58,16 @@ export class PendingPaidDispatch {
       this.#alive();
       this.#key = `fnx:stake:pending:${Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')}`;
       const stored = this.#storage.getItem(this.#key);
+      let pending: Pending = { kind: MUTATION.NONE };
       if (stored !== null) {
         const input: unknown = JSON.parse(stored);
-        this.#value = parsePendingRecord(input);
+        pending = parsePendingRecord(input);
       }
+      this.#alive();
+      this.#value = pending;
       this.#state = JOURNAL.LOADED;
-    } catch (error) {
-      if (error instanceof StakeSdkError && error.category === CATEGORY.LIFECYCLE) throw error;
+    } catch {
+      this.#alive();
       throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Pending mutation storage unavailable or corrupt');
     }
   }

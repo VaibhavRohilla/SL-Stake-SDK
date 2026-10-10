@@ -202,3 +202,34 @@ it.each(['EVENT', 'END_ROUND'] as const)('recreates exact V1 %s journal and clea
   await expect(next.endRound(round.betID)).rejects.toMatchObject({ code: STAKE_ERROR_CODE.RECONCILIATION_REQUIRED });
   expect(items.size).toBe(1); await next.authenticate(); expect(items.size).toBe(0); next.destroy();
 });
+
+describe('hostile codec prototypes and parser snapshots', () => {
+  it('rejects array subclasses and custom array prototypes without erasing their meaning', async () => {
+    class StateArray extends Array<number> {}
+    const custom = [1, 2]; Object.setPrototypeOf(custom, { custom: true });
+    const launch = parseStakeLaunch('?sessionID=fake-state&rgs_url=rgs.example');
+    if (launch.kind !== 'LIVE') throw new Error('fixture');
+    for (const state of [new StateArray(1, 2), custom, { nested: new StateArray(3, 4) }]) {
+      const client = createStakeLiveClient({ launch, codec: { parse: () => state }, fetch: queue(response({ ...auth, round })).fetch });
+      await expect(client.authenticate()).rejects.toMatchObject({ code: 'CODEC_FAILURE' });
+      expect(client.session).toBeUndefined(); client.destroy();
+    }
+  });
+  it('codec mutation cannot rewrite validated round or jurisdiction facts', async () => {
+    const supplied = { ...round, state: 1 };
+    const envelope = { ...auth, round: supplied, config: { ...config, jurisdiction: { ...jurisdiction } } };
+    const launch = parseStakeLaunch('?sessionID=fake-state&rgs_url=rgs.example');
+    if (launch.kind !== 'LIVE') throw new Error('fixture');
+    class EnvelopeResponse extends Response { override json() { return Promise.resolve(envelope); } }
+    const client = createStakeLiveClient({ launch, fetch: queue(new EnvelopeResponse()).fetch, codec: { parse() {
+      supplied.active = false; supplied.amount = 0; supplied.mode = 'changed';
+      envelope.config.jurisdiction.disabledTurbo = true;
+      return { nested: { value: 1 }, array: [2] };
+    } } });
+    const session = await client.authenticate();
+    expect(session.round).toMatchObject({ active: true, amount: round.amount, mode: round.mode });
+    expect(session.jurisdiction.disabledTurbo).toBe(false);
+    expect(Object.isFrozen(session.round?.state.nested)).toBe(true);
+    expect(Object.isFrozen(session.round?.state.array)).toBe(true); client.destroy();
+  });
+});

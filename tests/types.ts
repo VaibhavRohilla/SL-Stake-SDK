@@ -54,3 +54,15 @@ export function publicTypeProofs(live: StakeLiveClient<null>, replay: StakeRepla
   new StakeSdkError({ category: STAKE_ERROR_CATEGORY.TIMEOUT, code: STAKE_ERROR_CODE.NETWORK_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'invalid');
   void amount; void currency; void mode; void journal; void lease; void diagnostic; void ambiguous;
 }
+
+export function immutableStateProof(session: StakeSession<{ nested: { value: number }; steps: number[]; pair: [number, { value: string }] }>): void {
+  if (!session.round) return;
+  // @ts-expect-error Published nested state is immutable even when the codec input type is mutable.
+  session.round.state.nested.value = 2;
+  // @ts-expect-error Published arrays cannot be extended.
+  session.round.state.steps.push(1);
+  // @ts-expect-error Published tuple elements retain recursive immutability.
+  session.round.state.pair[1].value = 'changed';
+  const exactTupleValue: string = session.round.state.pair[1].value;
+  void exactTupleValue;
+}

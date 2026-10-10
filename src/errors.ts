@@ -82,9 +82,12 @@ export function invalid(field: string): never {
 }
 /** Unknown codes are discarded, never published or used as evidence of nonacceptance. */
 export function parseProviderError(input: unknown): StakeProviderFailure | null {
-  if (input === null || typeof input !== 'object' || !('error' in input)) return null;
-  if (typeof input.error !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(input.error)) return Object.freeze({ kind: PROVIDER_FAILURE_KIND.MALFORMED });
-  for (const code of Object.values(STAKE_PROVIDER_ERROR_CODE)) if (input.error === code) return Object.freeze({ kind: PROVIDER_FAILURE_KIND.KNOWN, code });
+  if (input === null || typeof input !== 'object') return null;
+  const descriptor = Object.getOwnPropertyDescriptor(input, 'error');
+  if (!descriptor) return null;
+  const code: unknown = descriptor.value;
+  if (!Object.hasOwn(descriptor, 'value') || typeof code !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) return Object.freeze({ kind: PROVIDER_FAILURE_KIND.MALFORMED });
+  for (const known of Object.values(STAKE_PROVIDER_ERROR_CODE)) if (code === known) return Object.freeze({ kind: PROVIDER_FAILURE_KIND.KNOWN, code: known });
   return Object.freeze({ kind: PROVIDER_FAILURE_KIND.UNRECOGNIZED });
 }
 export function isRejectionCode(code: StakeProviderErrorCode): code is StakeProviderRejectionCode {

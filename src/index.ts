@@ -9,7 +9,7 @@ export type { StakeLanguage, StakeDevice, StakeSessionId, StakeNumericBetId, Sta
 export { StakeSdkError, STAKE_ERROR_CATEGORY, STAKE_ERROR_CODE, STAKE_DISPATCH_PHASE, STAKE_PROVIDER_ERROR_CODE } from './errors.js';
 export type { StakeSdkErrorCategory, StakeSdkErrorCode, StakeDispatchPhase, StakeProviderErrorCode, StakeProviderRejectionCode,
   StakeProviderFailure, StakeSdkFailure, StakeAmbiguousDispatchReason } from './errors.js';
-export type { StakeGameStateCodec, StakeSession, StakeRound, StakeActiveRound, StakeCompletedRound, StakePlayedRound, StakePlayInput, StakePlayResult,
+export type { StakeReadonlyState, StakeGameStateCodec, StakeSession, StakeRound, StakeActiveRound, StakeCompletedRound, StakePlayedRound, StakePlayInput, StakePlayResult,
   StakeBalance, StakeBetConfig, StakeJurisdiction, StakeReplayResult } from './protocol.js';
 export { StakeLiveClient, createStakeLiveClient, STAKE_PAID_DISPATCH_STATUS } from './StakeLiveClient.js';
 export type { StakeLiveClientOptions, StakePaidDispatchStatus } from './StakeLiveClient.js';

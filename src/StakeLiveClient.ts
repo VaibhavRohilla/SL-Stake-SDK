@@ -74,7 +74,7 @@ export class StakeLiveClient<T> {
       case MUTATION.EVENT: resolved = round !== null && round.betID === pending.betID && round.event === pending.event; break;
       case MUTATION.END_ROUND: resolved = round !== null && round.betID === pending.betID && !round.active; break;
     }
-    if (resolved) { this.#pending.clear(); this.#dispatchStatus = STAKE_PAID_DISPATCH_STATUS.CONFIRMED; }
+    if (resolved) { this.#pending.clear(); this.#requests.assertAlive(); this.#dispatchStatus = STAKE_PAID_DISPATCH_STATUS.CONFIRMED; }
     else this.#dispatchStatus = STAKE_PAID_DISPATCH_STATUS.AMBIGUOUS;
   }
   async #authenticate(options: StakeRequestOptions): Promise<StakeSession<T>> {
@@ -90,6 +90,7 @@ export class StakeLiveClient<T> {
           (this.#pending.value.kind === MUTATION.PLAY ? this.#pending.value.currency : undefined)), options);
       this.#requests.assertAlive();
       this.#reconcile(session);
+      this.#requests.assertAlive();
       this.#session = session;
       return session;
     } catch (error) {
@@ -104,22 +105,37 @@ export class StakeLiveClient<T> {
   getActiveRound(options: StakeRequestOptions = {}): Promise<StakeActiveRound<T> | null> {
     return this.#exclusive(async () => activeRound(await this.#authenticate(options)));
   }
+  #clearProvenMutation(): void {
+    try { this.#pending.clear(); }
+    catch {
+      const destroyed = this.#dispatchStatus === STAKE_PAID_DISPATCH_STATUS.DESTROYED;
+      throw destroyed
+        ? new StakeSdkError({ category: CATEGORY.LIFECYCLE, code: CODE.DESTROYED,
+            dispatch: STAKE_DISPATCH_PHASE.RESPONSE_RECEIVED }, 'Client destroyed')
+        : new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE,
+            dispatch: STAKE_DISPATCH_PHASE.RESPONSE_RECEIVED }, 'Cannot clear proven mutation marker');
+    }
+  }
   async #mutation<R>(pending: StakePendingMutation, request: (onDispatch: () => void) => Promise<R>): Promise<R> {
     this.#assertResolved();
+    const resolvedStatus = this.#dispatchStatus;
     try {
-      const result = await request(() => {
-        this.#pending.prepare(pending);
-        if (pending.kind === MUTATION.PLAY) this.#dispatchStatus = STAKE_PAID_DISPATCH_STATUS.DISPATCHING;
-      });
-      try { this.#pending.clear(); }
-      catch (error) {
-        if (error instanceof StakeSdkError && error.category === CATEGORY.LIFECYCLE) throw error;
-        throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.RESPONSE_RECEIVED }, 'Cannot clear confirmed mutation marker');
+      let result: R;
+      try {
+        result = await request(() => {
+          this.#pending.prepare(pending);
+          if (pending.kind === MUTATION.PLAY) this.#dispatchStatus = STAKE_PAID_DISPATCH_STATUS.DISPATCHING;
+        });
+      } catch (error) {
+        if (error instanceof StakeSdkError && error.category === CATEGORY.BUSINESS_REJECTION) this.#clearProvenMutation();
+        throw error;
       }
+      this.#clearProvenMutation();
       return result;
     } catch (error) {
       if (error instanceof StakeSdkError && error.dispatch === STAKE_DISPATCH_PHASE.NOT_DISPATCHED) {
         this.#pending.discardUndispatched();
+        if (this.#dispatchStatus !== STAKE_PAID_DISPATCH_STATUS.DESTROYED) this.#dispatchStatus = resolvedStatus;
         throw error;
       }
       if (this.#pending.value.kind !== MUTATION.NONE && error instanceof StakeSdkError &&
@@ -132,7 +148,9 @@ export class StakeLiveClient<T> {
         }
         throw error;
       }
-      if (this.#dispatchStatus !== STAKE_PAID_DISPATCH_STATUS.DESTROYED) this.#pending.clear();
+      if (this.#dispatchStatus !== STAKE_PAID_DISPATCH_STATUS.DESTROYED) {
+        this.#dispatchStatus = resolvedStatus;
+      }
       throw error;
     }
   }

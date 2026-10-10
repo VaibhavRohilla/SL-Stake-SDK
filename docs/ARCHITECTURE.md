@@ -1,6 +1,16 @@
 # Stake SDK architecture and protocol authority
 
-STAKE-SDK-1T: **TYPE/PROTOCOL HARDENED — READY FOR HOSTILE AUDIT**. Starting candidate: `codex/stake-sdk-1` / `c62aba6a41603d74d1b9be6120b24e22e304b4e7`. One standalone package, zero runtime dependencies. Independent hostile audit remains the next batch; no commercial freeze/certification or real game binding is claimed. The exact candidate is the commit containing this completed record; qualification applies to its source/package contents.
+STAKE-SDK-1 remediation of independently audited base `codex/stake-sdk-1` / `61cd6ce0fa2942bd8d85eb637b0de240d0267444`. That base failed hostile audit. The current candidate consists of uncommitted changes on that base; the old SHA does not identify the new implementation. Independent re-audit and freeze have not been performed. One standalone package, zero runtime dependencies; no real-provider certification, commercial release or game binding is claimed.
+
+## Hostile-audit remediation
+
+- External fetch, response-body and reflection exceptions cannot become provider nonacceptance or alter the owner-established dispatch phase. Request-owned error identity controls propagation; external messages and supplied failure payloads are discarded.
+- Validated rejection restores the previous resolved status. Journal cleanup failures after validated success/rejection remain fenced with response-received evidence; destroy remains terminal.
+- Array subclasses/custom array prototypes reject before cloning. Provider round and jurisdiction facts are validated and snapshotted before codec callbacks run. Published state carries recursive readonly typing, preserving tuple structure.
+- Browser lease acquisition maps platform failures to sanitized typed errors. Actual lock availability determines conflict; exception class/code does not. Storage loading likewise preserves lifecycle truth from its own owner. Reentrant storage callbacks cannot revive a destroyed journal or republish a reconciled session after destroy.
+- The exported `fields` record-bag helper was deleted. HTTP parsing uses an unexported scalar field reader that accepts only own data properties; journal parsing narrows required fields directly. No replacement compatibility path or generic bag exists.
+
+Each finding has durable behavior/type regression coverage. This remediation is an implementation pass, not a new independent hostile-audit verdict.
 
 ## Source identity and evidence
 
@@ -22,9 +32,9 @@ No new real account transaction was performed. Local test credentials are fake. 
 
 ## TYPE AUTHORITY
 
-External wire/storage input is `unknown` → pure parser/validator → exact immutable Stake domain → normal SDK runtime. `unknown` is confined to launch/identity/money validators, response parsers, title codec/plain-data validation and storage/network ingress. Local `Record<string, unknown>` exists only in the internal object-narrowing helper and cannot escape through public results. No public generic provider bag, raw wire DTO or schema-library type exists.
+External wire/storage input is `unknown` → pure parser/validator → exact immutable Stake domain → normal SDK runtime. `unknown` is confined to launch/identity/money validators, response parsers, title codec/plain-data validation and storage/network ingress. No `Record<string, unknown>` remains. Untrusted field values exist only within boundary parsing and must validate before publication. No public generic provider bag, raw wire DTO or schema-library type exists.
 
-Title state has no TypeScript index-signature constraint. Runtime supports exactly null, boolean, finite number, string, dense array and plain object (ordinary or null prototype) with enumerable string data properties. Cycles, undefined, nonfinite numbers, BigInt, symbols/functions, accessors/hidden properties, decorated/sparse arrays, Date/Map/Set/ArrayBuffer/typed arrays/classes are rejected before cloning. Shared acyclic references are supported. A validated copy is recursively frozen; original codec output remains caller-owned.
+Title state has no TypeScript index-signature constraint. Runtime supports exactly null, boolean, finite number, string, dense array and plain object (ordinary or null prototype) with enumerable string data properties. Cycles, undefined, nonfinite numbers, BigInt, symbols/functions, accessors/hidden properties, decorated/sparse arrays, Date/Map/Set/ArrayBuffer/typed arrays/classes, including array subclasses, are rejected before cloning. Shared acyclic references are supported. A validated copy is recursively frozen and published as StakeReadonlyState<T>; nested readonly typing preserves arrays and tuples. Original codec output remains caller-owned.
 
 ## Current ownership and dependencies
 
@@ -35,7 +45,7 @@ Title state has no TypeScript index-signature constraint. Runtime supports exact
 | Replay | StakeReplayClient | Requests, codec, validated replay identities; no authentication/mutation/lease/journal/diagnostics public options |
 | HTTP lifetime | Requests (internal) | Exact endpoint request union, fetch, timeout/abort/destroy, JSON boundary and endpoint parser |
 | Provider facts | protocol pure parsers (internal) | Domain/money validators and title codec; never raw JSON publication |
-| Game-state meaning | injected StakeGameStateCodec | Only title owns meaning; SDK validates supported value envelope and freezes a copy |
+| Game-state meaning | injected StakeGameStateCodec | Only title owns meaning; SDK validates supported values and returns a frozen copy with recursive readonly types |
 | Pending uncertainty | PendingPaidDispatch (internal) | Exact mutation union, synchronous storage and SHA-256 session key; V1 validation, no credentials or retry |
 | Browser exclusion | SessionLease (internal) | Opt-in same-origin Web Locks; NONE/WEB_LOCKS policy, no heartbeat/TTL/storage lease |
 | Failures/observations | StakeSdkError and live diagnostic callback | Frozen category/code union and exact safe facts; observers cannot determine protocol truth |
@@ -96,26 +106,25 @@ Excluded: generic provider API, wallet polling, provider metadata passthrough, t
 
 Remaining migration: NONE in this batch. Remaining evidence questions: confirm duration unit, expanded docs vocabulary admission and archived/live play currency. These are explicit evidence limits; no fallback or invented interpretation fills them. Independent hostile audit of the exact committed candidate is the next batch; this implementation pass does not perform that audit.
 
-## Qualification (2026-10-10)
+## Qualification of the remediation candidate (2026-10-11)
 
-Fresh final-candidate qualification was captured after the source/type changes; STAKE-SDK-1 test results are historical and not inherited. Permanent tests protect governed rejection, exact round narrowing/recovery, zero-payout completion, journal version fences, codec data law, immutable failure/public facts and exact wire bodies. Existing HTTP/browser/consumer lifecycle proof remains in the canonical lanes. Doctor stays static; pack:verify reuses consumer/package proof.
+Qualification is run on the modified working tree, not inherited from the audited base. Permanent regressions cover external SDK-error spoofing through fetch/body/reflection, journal survival across recreation, rejected-play status restoration, cleanup failure fences, array subclasses, codec mutation of provider facts, recursive readonly types, and native browser crypto/storage failures.
 
 | Command | Result |
 |---|---|
 | npm run build | PASS (ESM/DTS) |
-| npm run typecheck | PASS (strict source/tests/examples) |
+| npm run typecheck | PASS (source, examples and readonly negative proofs) |
 | npm run lint | PASS |
-| npm run doctor | PASS (static only) |
-| npm test | PASS (90 behavior tests) |
-| npm run test:integration | PASS (real local HTTP/platform fetch) |
-| npm run test:browser | PASS (4 Chromium scenarios) |
-| npm run test:consumer | PASS (installed tarball, exact public DTS/ESM, private export denial) |
-| npm run pack:verify | PASS (same canonical installed-package proof) |
-| Focused tests/types.ts strict compilation | PASS (15 intentional negative proofs plus positive narrowing) |
+| npm run doctor | PASS (static checks) |
+| npm test | PASS (105 behavior tests) |
+| npm run test:integration | PASS (1 real local HTTP test) |
+| npm run test:browser | PASS (5 Chromium scenarios) |
+| npm run test:consumer | PASS (installed tarball, readonly DTS/ESM and private-import denial) |
+| npm run pack:verify | PASS (second installed tarball consumer) |
 | git diff --check | PASS |
-| Independent hostile audit | NOT RUN (next batch) |
+| Independent hostile re-audit | NOT RUN |
 | Real Stake transaction/commercial certification | NOT RUN |
 
-Final source integrity: 38 explicit unknown occurrences (validation boundaries only); 2 local Record<string, unknown> type occurrences in fields; 1 object type for the cycle-validation WeakSet; zero explicit any, Record<string, any>, Partial, double casts, ts-ignore, production ts-expect-error or non-null assertions. The 15 ts-expect-error comments exist only in tests/types.ts. Validated brand introduction uses single assertions; no unchecked provider-to-domain assertion exists. The full delivery report enumerates symbols/locations and the public inventory outside this repository.
+Source integrity: no explicit any, Record bags, Partial domain types, double casts, production suppression comments or non-null assertions. External/parser/codec ingress remains unknown until validation; no normal retained-domain field uses unknown. Single brand assertions follow runtime checks. The readonly-state assertion follows complete validation, cloning and recursive freezing.
 
-No real-provider transaction, independent hostile audit, commercial certification/freeze or SL-Engine recertification was run or claimed.
+No freeze, commit, real-provider transaction, commercial certification or SL-Engine modification is part of this remediation.

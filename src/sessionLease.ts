@@ -16,9 +16,6 @@ export class SessionLease {
     if (this.#isDestroyed()) throw new StakeSdkError({ category: CATEGORY.LIFECYCLE, code: CODE.DESTROYED, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Client destroyed');
     if (signal?.aborted) throw new StakeSdkError({ category: CATEGORY.ABORTED, code: CODE.REQUEST_ABORTED, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Lease acquisition aborted');
     if (this.#state === LEASE.HELD) return;
-    if (typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.locks || !globalThis.crypto?.subtle) {
-      throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.LEASE_UNAVAILABLE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Browser Web Locks unavailable');
-    }
     const controller = this.#abort;
     const aborted = (): StakeSdkError => this.#isDestroyed()
       ? new StakeSdkError({ category: CATEGORY.LIFECYCLE, code: CODE.DESTROYED, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Client destroyed')
@@ -30,7 +27,11 @@ export class SessionLease {
       rejectAbort = () => reject(aborted());
       controller.signal.addEventListener('abort', rejectAbort, { once: true });
     });
+    let conflict = false;
     try {
+      if (typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.locks || !globalThis.crypto?.subtle) {
+        throw new Error('Browser lease facilities unavailable');
+      }
       const hash = await Promise.race([crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([base, sessionID]))), interruption]);
       if (controller.signal.aborted) throw aborted();
       const key = `fnx:stake:${Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')}`;
@@ -39,12 +40,16 @@ export class SessionLease {
         // The platform forbids combining ifAvailable with signal; manually fence the nonqueued callback.
         void navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
           if (controller.signal.aborted || this.#isDestroyed()) { reject(aborted()); return; }
-          if (!lock) { reject(new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.LEASE_CONFLICT, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Session already leased')); return; }
+          if (!lock) { conflict = true; reject(new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.LEASE_CONFLICT, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Session already leased')); return; }
           this.#state = LEASE.HELD;
           resolve();
           await held;
         }).catch(() => reject(new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.LEASE_UNAVAILABLE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Lease request failed')));
       }), interruption]);
+    } catch {
+      if (controller.signal.aborted || this.#isDestroyed()) throw aborted();
+      throw new StakeSdkError({ category: CATEGORY.SESSION, code: conflict ? CODE.LEASE_CONFLICT : CODE.LEASE_UNAVAILABLE,
+        dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Browser session lease unavailable');
     } finally {
       signal?.removeEventListener('abort', forward);
       if (rejectAbort) controller.signal.removeEventListener('abort', rejectAbort);
