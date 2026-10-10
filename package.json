@@ -15,7 +15,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests examples",
-    "test": "vitest run tests/client.test.ts",
+    "test": "vitest run tests/client.test.ts tests/protocol.test.ts",
     "test:integration": "vitest run tests/http.integration.test.ts",
     "test:browser": "npm run build && playwright test",
     "test:consumer": "npm run build && node scripts/consumer.mjs",

@@ -1,20 +1,24 @@
 import { StakeSdkError, STAKE_ERROR_CATEGORY as CATEGORY, STAKE_ERROR_CODE as CODE } from './errors.js';
-import type { StakeDispatchState, StakeSdkErrorCategory } from './errors.js';
+import { STAKE_DISPATCH_PHASE, parseProviderError, isRejectionCode } from './errors.js';
+import { LIFECYCLE, INTERRUPTION, OPERATION, PROVIDER_FAILURE_KIND } from './vocabulary.js';
+import { requestPath } from './wire.js';
+import type { StakeEndpointRequest } from './wire.js';
+import type { Operation } from './vocabulary.js';
+import type { StakeDispatchPhase, StakeSdkErrorCategory } from './errors.js';
 export interface StakeRequestOptions { readonly signal?: AbortSignal }
-export interface StakeDiagnostic {
-  readonly kind: 'REQUEST_STARTED' | 'REQUEST_FINISHED' | 'REQUEST_FAILED';
-  readonly operation: 'AUTHENTICATE' | 'PLAY' | 'EVENT' | 'END_ROUND' | 'REPLAY';
-  readonly category?: StakeSdkErrorCategory;
-}
+export const STAKE_DIAGNOSTIC_KIND = Object.freeze({ REQUEST_STARTED: 'REQUEST_STARTED', REQUEST_FINISHED: 'REQUEST_FINISHED', REQUEST_FAILED: 'REQUEST_FAILED' } as const);
+export type StakeDiagnosticEvent =
+  | { readonly kind: typeof STAKE_DIAGNOSTIC_KIND.REQUEST_STARTED; readonly operation: Operation }
+  | { readonly kind: typeof STAKE_DIAGNOSTIC_KIND.REQUEST_FINISHED; readonly operation: Operation }
+  | { readonly kind: typeof STAKE_DIAGNOSTIC_KIND.REQUEST_FAILED; readonly operation: Operation; readonly category: StakeSdkErrorCategory };
 export interface StakeNetworkOptions {
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
   /** Observational only. Exceptions from this callback are isolated from protocol authority. */
-  readonly diagnostics?: (event: StakeDiagnostic) => void;
+  readonly diagnostics?: (event: StakeDiagnosticEvent) => void;
 }
-const REJECTION_CODES = new Set(['ERR_VAL', 'ERR_IPB', 'ERR_IS', 'ERR_ATE', 'ERR_GLE', 'ERR_LOC']);
 export class Requests {
-  #state: 'ALIVE' | 'DESTROYED' = 'ALIVE';
+  #state: typeof LIFECYCLE[keyof typeof LIFECYCLE] = LIFECYCLE.ACTIVE;
   #inFlight = new Set<AbortController>();
   readonly #fetch: typeof globalThis.fetch;
   readonly #timeoutMs: number;
@@ -23,38 +27,40 @@ export class Requests {
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = options.timeoutMs ?? 30_000;
     if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs <= 0 || this.#timeoutMs > 2_147_483_647) {
-      throw new StakeSdkError(CATEGORY.VALIDATION, CODE.INVALID_INPUT, 'Invalid timeout');
+      throw new StakeSdkError({ category: CATEGORY.VALIDATION, code: CODE.INVALID_INPUT, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Invalid timeout');
     }
     this.#diagnostics = options.diagnostics;
   }
   assertAlive(): void {
-    if (this.#state === 'DESTROYED') throw new StakeSdkError(CATEGORY.LIFECYCLE, CODE.DESTROYED, 'Client destroyed');
+    if (this.#state === LIFECYCLE.DESTROYED) throw new StakeSdkError({ category: CATEGORY.LIFECYCLE, code: CODE.DESTROYED, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Client destroyed');
   }
   destroy(): void {
-    this.#state = 'DESTROYED';
+    this.#state = LIFECYCLE.DESTROYED;
     for (const controller of this.#inFlight) controller.abort();
     this.#inFlight.clear();
   }
-  #emit(event: StakeDiagnostic): void {
+  #emit(event: StakeDiagnosticEvent): void {
     try { this.#diagnostics?.(Object.freeze(event)); }
     catch { /* Diagnostic consumers are observers; they cannot alter request truth. */ }
   }
-  async run<T>(operation: StakeDiagnostic['operation'], path: string, body: string | undefined,
+  async run<T>(request: StakeEndpointRequest,
     parse: (input: unknown) => T, options: StakeRequestOptions = {}, onDispatch?: () => void): Promise<T> {
+    const operation = request.operation, path = requestPath(request);
+    const body = request.operation === OPERATION.REPLAY ? undefined : JSON.stringify(request.body);
     this.assertAlive();
-    if (options.signal?.aborted) throw new StakeSdkError(CATEGORY.ABORTED, CODE.REQUEST_ABORTED, 'Request aborted');
+    if (options.signal?.aborted) throw new StakeSdkError({ category: CATEGORY.ABORTED, code: CODE.REQUEST_ABORTED, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Request aborted');
     const controller = new AbortController();
     this.#inFlight.add(controller);
-    let dispatch: StakeDispatchState = 'NOT_DISPATCHED';
-    let interruption: 'NONE' | 'ABORTED' | 'TIMEOUT' = 'NONE';
-    const forwardAbort = (): void => { interruption = 'ABORTED'; controller.abort(); };
+    let dispatch: StakeDispatchPhase = STAKE_DISPATCH_PHASE.NOT_DISPATCHED;
+    let interruption: typeof INTERRUPTION[keyof typeof INTERRUPTION] = INTERRUPTION.NONE;
+    const forwardAbort = (): void => { interruption = INTERRUPTION.ABORTED; controller.abort(); };
     options.signal?.addEventListener('abort', forwardAbort, { once: true });
-    const timer = setTimeout(() => { interruption = 'TIMEOUT'; controller.abort(); }, this.#timeoutMs);
+    const timer = setTimeout(() => { interruption = INTERRUPTION.TIMEOUT; controller.abort(); }, this.#timeoutMs);
     const interrupted = (): StakeSdkError => {
-      if (this.#state === 'DESTROYED') return new StakeSdkError(CATEGORY.LIFECYCLE, CODE.DESTROYED, 'Client destroyed', dispatch);
-      return interruption === 'TIMEOUT'
-        ? new StakeSdkError(CATEGORY.TIMEOUT, CODE.REQUEST_TIMEOUT, 'Request timed out', dispatch)
-        : new StakeSdkError(CATEGORY.ABORTED, CODE.REQUEST_ABORTED, 'Request aborted', dispatch);
+      if (this.#state === LIFECYCLE.DESTROYED) return new StakeSdkError({ category: CATEGORY.LIFECYCLE, code: CODE.DESTROYED, dispatch: dispatch }, 'Client destroyed');
+      return interruption === INTERRUPTION.TIMEOUT
+        ? new StakeSdkError({ category: CATEGORY.TIMEOUT, code: CODE.REQUEST_TIMEOUT, dispatch: dispatch }, 'Request timed out')
+        : new StakeSdkError({ category: CATEGORY.ABORTED, code: CODE.REQUEST_ABORTED, dispatch: dispatch }, 'Request aborted');
     };
     let rejectAbort: (() => void) | undefined;
     const abortPromise = new Promise<never>((_resolve, reject) => {
@@ -64,53 +70,57 @@ export class Requests {
     // Pre-dispatch callbacks can abort before the first race subscribes; the caller still receives interrupted().
     void abortPromise.catch(() => undefined);
     try {
-      this.#emit({ kind: 'REQUEST_STARTED', operation });
+      this.#emit({ kind: STAKE_DIAGNOSTIC_KIND.REQUEST_STARTED, operation });
       // Diagnostics can re-enter destroy/abort; recheck immediately before dispatch.
       if (controller.signal.aborted) throw interrupted();
       this.assertAlive();
       onDispatch?.();
       if (controller.signal.aborted) throw interrupted();
       this.assertAlive();
-      dispatch = 'MAY_HAVE_DISPATCHED';
+      dispatch = STAKE_DISPATCH_PHASE.MAY_HAVE_DISPATCHED;
       const response = await Promise.race([this.#fetch(`${this.base}${path}`, {
         method: body === undefined ? 'GET' : 'POST',
         ...(body === undefined ? {} : { body, headers: { 'content-type': 'application/json' } }),
         signal: controller.signal, redirect: 'error', credentials: 'omit', cache: 'no-store',
       }), abortPromise]);
-      dispatch = 'RESPONSE_RECEIVED';
+      dispatch = STAKE_DISPATCH_PHASE.RESPONSE_RECEIVED;
       const json: unknown = await Promise.race([response.json().catch(() => {
-        throw new StakeSdkError(CATEGORY.PROTOCOL, CODE.INVALID_JSON, 'Response is not JSON', dispatch);
+        throw new StakeSdkError({ category: CATEGORY.PROTOCOL, code: CODE.INVALID_JSON, dispatch: dispatch, provider: null }, 'Response is not JSON');
       }), abortPromise]);
       if (controller.signal.aborted) throw interrupted();
       this.assertAlive();
-      if (json !== null && typeof json === 'object' && 'error' in json) {
-        const raw = json.error;
-        if (typeof raw !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(raw)) {
-          throw new StakeSdkError(CATEGORY.PROTOCOL, CODE.INVALID_RESPONSE, 'Invalid provider error envelope', dispatch);
+      const provider = parseProviderError(json);
+      if (provider !== null) {
+        if (provider.kind === PROVIDER_FAILURE_KIND.KNOWN && response.status >= 400 && response.status < 500 && isRejectionCode(provider.code)) {
+          throw new StakeSdkError({ category: CATEGORY.BUSINESS_REJECTION, code: CODE.PROVIDER_REJECTION, dispatch, providerCode: provider.code }, 'Provider rejected request');
         }
-        const definite = response.status >= 400 && response.status < 500 && REJECTION_CODES.has(raw);
-        throw new StakeSdkError(definite ? CATEGORY.BUSINESS_REJECTION : CATEGORY.PROTOCOL,
-          definite ? CODE.PROVIDER_REJECTION : CODE.HTTP_FAILURE, 'Provider rejected request', dispatch, raw);
+        throw new StakeSdkError({ category: CATEGORY.PROTOCOL,
+          code: provider.kind === PROVIDER_FAILURE_KIND.MALFORMED ? CODE.INVALID_RESPONSE : CODE.HTTP_FAILURE,
+          dispatch, provider }, 'Unproven provider error response');
       }
-      if (response.status !== 200) throw new StakeSdkError(CATEGORY.PROTOCOL, CODE.HTTP_FAILURE, 'Unexpected HTTP status', dispatch);
+      if (response.status !== 200) throw new StakeSdkError({ category: CATEGORY.PROTOCOL, code: CODE.HTTP_FAILURE, dispatch: dispatch, provider: null }, 'Unexpected HTTP status');
       let result: T;
       try { result = parse(json); }
       catch (error) {
-        if (error instanceof StakeSdkError) throw new StakeSdkError(error.category,
-          error.code === CODE.INVALID_INPUT ? CODE.INVALID_RESPONSE : error.code,
-          'Response validation failed', dispatch, error.providerCode);
-        throw new StakeSdkError(CATEGORY.VALIDATION, CODE.INVALID_RESPONSE, 'Response validation failed', dispatch);
+        if (error instanceof StakeSdkError && error.failure.category !== CATEGORY.AMBIGUOUS_PAID_DISPATCH) {
+          const failure = error.failure;
+          if (failure.category === CATEGORY.VALIDATION && failure.code === CODE.INVALID_INPUT) {
+            throw new StakeSdkError({ ...failure, code: CODE.INVALID_RESPONSE, dispatch }, 'Response validation failed');
+          }
+          throw new StakeSdkError({ ...failure, dispatch }, 'Response validation failed');
+        }
+        throw new StakeSdkError({ category: CATEGORY.VALIDATION, code: CODE.INVALID_RESPONSE, dispatch: dispatch }, 'Response validation failed');
       }
       // Codecs and diagnostics may destroy the client synchronously.
       if (controller.signal.aborted) throw interrupted();
       this.assertAlive();
-      this.#emit({ kind: 'REQUEST_FINISHED', operation });
+      this.#emit({ kind: STAKE_DIAGNOSTIC_KIND.REQUEST_FINISHED, operation });
       if (controller.signal.aborted) throw interrupted();
       return result;
     } catch (error) {
       const failure = controller.signal.aborted ? interrupted() : error instanceof StakeSdkError ? error
-        : new StakeSdkError(CATEGORY.TRANSPORT, CODE.NETWORK_FAILURE, 'Network request failed', dispatch);
-      this.#emit({ kind: 'REQUEST_FAILED', operation, category: failure.category });
+        : new StakeSdkError({ category: CATEGORY.TRANSPORT, code: CODE.NETWORK_FAILURE, dispatch: dispatch }, 'Network request failed');
+      this.#emit({ kind: STAKE_DIAGNOSTIC_KIND.REQUEST_FAILED, operation, category: failure.category });
       throw failure;
     } finally {
       clearTimeout(timer);

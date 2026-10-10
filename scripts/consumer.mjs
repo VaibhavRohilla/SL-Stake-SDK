@@ -26,28 +26,33 @@ await writeFile(join(output, 'package.json'), JSON.stringify({ type: 'module', p
 execFileSync('npm', ['install', '--cache', join(output, 'cache'), '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(output, packed.filename)], { cwd: output, stdio: 'pipe' });
 const consumer = `
 import assert from 'node:assert/strict';
-import { parseStakeLaunch, createStakeLiveClient, createStakeReplayClient, stakeAmountMicros, StakeSdkError } from '@fnx/stake-sdk';
-import type { StakeGameStateCodec, StakeReplayClient } from '@fnx/stake-sdk';
+import { parseStakeLaunch, createStakeLiveClient, createStakeReplayClient, stakeBetMode, stakeEventId, stakeAmountMicros, StakeSdkError } from '@fnx/stake-sdk';
+import type { StakeGameStateCodec, StakeReplayClient, StakeAmountMicros, StakeBetMode, StakeCurrencyCode, StakePlayInput, StakeRound } from '@fnx/stake-sdk';
 type Assert<T extends true> = T;
-export type ReplaySafe = Assert<Extract<keyof StakeReplayClient<number>, 'play' | 'recordEvent' | 'endRound'> extends never ? true : false>;
+export type ReplaySafe = Assert<Extract<keyof StakeReplayClient<number>, 'play' | 'recordEvent' | 'endRound' | 'authenticate'> extends never ? true : false>;
+export type ExactAmount = Assert<number extends StakeAmountMicros ? false : true>;
+export type ExactMode = Assert<string extends StakeBetMode ? false : true>;
+export type ExactCurrency = Assert<string extends StakeCurrencyCode ? false : true>;
+export type CurrencyOwnedBySession = Assert<'currency' extends keyof StakePlayInput ? false : true>;
+export type RequiredActiveAmount = Assert<Extract<StakeRound<number>, { active: true }>['amount'] extends StakeAmountMicros ? true : false>;
 const codec: StakeGameStateCodec<number> = { parse(input) { if (typeof input !== 'number') throw new Error('invalid state'); return input; } };
-const balance = { amount: 10000000, currency: 'BTC' };
-const config = { minBet: 1000000, maxBet: 1000000, stepBet: 1000000, defaultBetLevel: 1000000, betLevels: [1000000] };
-const round = { betID: 'fake-consumer-round', amount: 1000000, active: true, mode: 'BASE', state: 7 };
+const balance = { amount: 10000000, currency: 'USD' };
+const config = { minBet: 1000000, maxBet: 1000000, stepBet: 1000000, defaultBetLevel: 1000000, betLevels: [1000000], jurisdiction: { socialCasino: false, disabledFullscreen: false, disabledTurbo: false, disabledSuperTurbo: false, disabledAutoplay: false, disabledSlamstop: false, disabledSpacebar: false, disabledBuyFeature: false, displayNetPosition: false, displayRTP: false, displaySessionTimer: false, minimumRoundDuration: 0 } };
+const round = { betID: 'fake-consumer-round', amount: 1000000, active: true, mode: stakeBetMode('BASE'), state: 7 };
 const calls: string[] = [];
 const fetchImpl: typeof fetch = async (url, init) => {
   const path = new URL(String(url)).pathname; calls.push(path);
   const payload = path === '/wallet/authenticate' ? { balance, config, round: null } : path === '/wallet/play' ? { balance, round }
     : path === '/bet/event' ? { event: 'checkpoint' } : path === '/wallet/end-round' ? { balance }
     : { state: 7, payoutMultiplier: 2, costMultiplier: 1 };
-  if (path === '/wallet/play') assert.equal(JSON.parse(String(init?.body)).currency, 'BTC');
+  if (path === '/wallet/play') assert.equal(JSON.parse(String(init?.body)).currency, 'USD');
   return Response.json(payload);
 };
 const launch = parseStakeLaunch('?sessionID=fake-consumer&rgs_url=rgs.example');
 if (launch.kind !== 'LIVE') throw new Error('launch');
 const client = createStakeLiveClient({ launch, codec, fetch: fetchImpl });
-await client.authenticate(); const result = await client.play({ amount: stakeAmountMicros(1000000), mode: 'BASE' });
-assert.equal(result.round.state, 7); await client.recordEvent(result.round.betID, 'checkpoint'); await client.endRound(result.round.betID); client.destroy();
+await client.authenticate(); const result = await client.play({ amount: stakeAmountMicros(1000000), mode: stakeBetMode('BASE') });
+assert.equal(result.round.state, 7); await client.recordEvent(result.round.betID, stakeEventId('checkpoint')); await client.endRound(result.round.betID); client.destroy();
 const replayLaunch = parseStakeLaunch('?replay=true&rgs_url=rgs.example&game=fake&version=1&mode=BASE&event=55');
 if (replayLaunch.kind !== 'REPLAY') throw new Error('launch');
 const replay = createStakeReplayClient({ launch: replayLaunch, codec, fetch: fetchImpl }); assert.equal((await replay.acquire()).state, 7); replay.destroy();

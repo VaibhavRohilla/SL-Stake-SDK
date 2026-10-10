@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseStakeLaunch, stakeAmountMicros, StakeSdkError } from '../src/index.js';
-import { live, replay, queue, response, auth, config, balance, round, played, deferred } from './fixtures.js';
-const wager = { amount: stakeAmountMicros(1_000_000), mode: 'BASE' };
+import { stakeBetMode, stakeEventId, stakeBetId, parseStakeLaunch, stakeAmountMicros, StakeSdkError } from '../src/index.js';
+import { live, replay, queue, response, auth, config, jurisdiction, balance, round, played, deferred } from './fixtures.js';
+const wager = { amount: stakeAmountMicros(1_000_000), mode: stakeBetMode('BASE') };
 describe('launch and exact economics', () => {
   it.each([0, 1, 1_000_000, Number.MAX_SAFE_INTEGER])('accepts safe micros %s', amount => expect(stakeAmountMicros(amount)).toBe(amount));
   it.each([-1, 0.1, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, '1000000'])('rejects invalid micros %s', amount => expect(() => stakeAmountMicros(amount)).toThrow(StakeSdkError));
@@ -40,10 +40,10 @@ describe('live protocol boundary', () => {
     const session = await client.authenticate(); expect(session.config.defaultBetAmount).toBe(1_000_000);
     expect(Object.isFrozen(session.config.betLevels)).toBe(true);
     const result = await client.play(wager); expect(Object.isFrozen(result.round.state)).toBe(true);
-    await client.recordEvent(result.round.betID, 'checkpoint:1');
+    await client.recordEvent(result.round.betID, stakeEventId('checkpoint:1'));
     await client.endRound(result.round.betID);
     expect(network.calls.map(call => [new URL(call.url).pathname, JSON.parse(String(call.init?.body))])).toEqual([
-      ['/wallet/authenticate', { sessionID: 'fake-session' }],
+      ['/wallet/authenticate', { sessionID: 'fake-session', language: 'en' }],
       ['/wallet/play', { sessionID: 'fake-session', ...wager, currency: 'USD' }],
       ['/bet/event', { sessionID: 'fake-session', event: 'checkpoint:1' }],
       ['/wallet/end-round', { sessionID: 'fake-session' }],
@@ -55,7 +55,7 @@ describe('live protocol boundary', () => {
     const network = queue(response(auth)); const client = live(network.fetch);
     await expect(client.play(wager)).rejects.toMatchObject({ code: 'NOT_AUTHENTICATED' });
     await client.authenticate();
-    await expect(client.recordEvent('wrong', 'event')).rejects.toMatchObject({ code: 'ROUND_MISMATCH' });
+    await expect(client.recordEvent(stakeBetId('wrong'), stakeEventId('event'))).rejects.toMatchObject({ code: 'ROUND_MISMATCH' });
     await expect(client.play({ ...wager, amount: stakeAmountMicros(0) })).rejects.toMatchObject({ category: 'VALIDATION' });
     expect(network.calls).toHaveLength(1);
   });
@@ -71,7 +71,7 @@ describe('live protocol boundary', () => {
     expect(client.session).toBeUndefined();
   });
   it('currency mismatch and missing round identity fence dispatched play', async () => {
-    for (const result of [{ ...played, balance: { ...balance, currency: 'BTC' } }, { ...played, round: { ...round, betID: undefined } }]) {
+    for (const result of [{ ...played, balance: { ...balance, currency: 'EUR' } }, { ...played, round: { ...round, betID: undefined } }]) {
       const client = live(queue(response(auth), response(result)).fetch);
       await client.authenticate();
       await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH' });
@@ -100,7 +100,7 @@ describe('paid ambiguity and reconciliation', () => {
     let count = 0;
     const client = live(async () => { count++; if (count === 1) return response(auth); if (count === 2) throw new TypeError('fake network'); return response({ ...auth, round }); });
     await client.authenticate();
-    await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', reason: 'TRANSPORT' });
+    await expect(client.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', failure: { reason: { category: 'TRANSPORT' } } });
     await expect(client.play(wager)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
     await expect(client.endRound(round.betID)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
     expect(count).toBe(2); expect(client.paidDispatchStatus).toBe('AMBIGUOUS');
@@ -118,7 +118,7 @@ describe('paid ambiguity and reconciliation', () => {
   it('validated 4xx business rejection proves nonacceptance; 5xx with same code does not', async () => {
     const network = queue(response(auth), response({ error: 'ERR_IPB' }, 400), response(played));
     const client = live(network.fetch); await client.authenticate();
-    await expect(client.play(wager)).rejects.toMatchObject({ category: 'BUSINESS_REJECTION', providerCode: 'ERR_IPB' });
+    await expect(client.play(wager)).rejects.toMatchObject({ category: 'BUSINESS_REJECTION', failure: { providerCode: 'ERR_IPB' } });
     await client.play(wager); expect(network.calls).toHaveLength(3);
     const uncertain = live(queue(response(auth), response({ error: 'ERR_IPB' }, 500)).fetch); await uncertain.authenticate();
     await expect(uncertain.play(wager)).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH' });
@@ -133,7 +133,7 @@ describe('paid ambiguity and reconciliation', () => {
       const held = deferred<Response>(); let count = 0;
       const client = live(async () => ++count === 1 ? response(auth) : held.promise, { timeoutMs: 20 });
       await client.authenticate();
-      const promise = client.play(wager); const assertion = expect(promise).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', reason: 'TIMEOUT' });
+      const promise = client.play(wager); const assertion = expect(promise).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', failure: { reason: { category: 'TIMEOUT' } } });
       await vi.advanceTimersByTimeAsync(20); await assertion; held.resolve(response(played));
       expect(client.session?.round).toBeNull(); client.destroy();
       const stream = new ReadableStream<Uint8Array>({ start() { /* held body */ } });
@@ -147,7 +147,7 @@ describe('paid ambiguity and reconciliation', () => {
       const confirmed = operation === 'EVENT' ? { ...round, event: 'checkpoint' } : { ...round, active: false };
       const network = queue(response({ ...auth, round }), response({ error: 'ERR_GEN' }, 500), response({ ...auth, round: confirmed }));
       const client = live(network.fetch); await client.authenticate();
-      const invoke = () => operation === 'EVENT' ? client.recordEvent(round.betID, 'checkpoint') : client.endRound(round.betID);
+      const invoke = () => operation === 'EVENT' ? client.recordEvent(round.betID, stakeEventId('checkpoint')) : client.endRound(round.betID);
       await expect(invoke()).rejects.toMatchObject({ category: 'PROTOCOL' });
       await expect(invoke()).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
       expect(network.calls).toHaveLength(2);
@@ -161,10 +161,10 @@ describe('destroy, abort, diagnostics and isolation', () => {
     const client = live(async () => { count++; return operation !== 'AUTH' && count === 1 ? response({ ...auth, round: operation === 'PLAY' ? null : round }) : held.promise; });
     if (operation !== 'AUTH') await client.authenticate();
     const pending = operation === 'AUTH' ? client.authenticate() : operation === 'PLAY' ? client.play(wager)
-      : operation === 'ACTIVE' ? client.getActiveRound() : operation === 'EVENT' ? client.recordEvent(round.betID, 'checkpoint') : client.endRound(round.betID);
+      : operation === 'ACTIVE' ? client.getActiveRound() : operation === 'EVENT' ? client.recordEvent(round.betID, stakeEventId('checkpoint')) : client.endRound(round.betID);
     await Promise.resolve(); client.destroy();
     await expect(pending).rejects.toMatchObject(operation === 'PLAY'
-      ? { category: 'AMBIGUOUS_PAID_DISPATCH', reason: 'LIFECYCLE' } : { category: 'LIFECYCLE' });
+      ? { category: 'AMBIGUOUS_PAID_DISPATCH', failure: { reason: { category: 'LIFECYCLE' } } } : { category: 'LIFECYCLE' });
     held.resolve(response(operation === 'PLAY' ? played : { ...auth, round })); await Promise.resolve();
     expect(client.session).toBeUndefined(); expect(client.paidDispatchStatus).toBe('DESTROYED');
     await expect(client.authenticate()).rejects.toMatchObject({ code: 'DESTROYED' });
@@ -181,17 +181,17 @@ describe('destroy, abort, diagnostics and isolation', () => {
     const held = deferred<Response>(); let count = 0; const controller = new AbortController();
     const client = live(async () => ++count === 1 ? response(auth) : held.promise); await client.authenticate();
     const pending = client.play(wager, { signal: controller.signal }); controller.abort();
-    await expect(pending).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', reason: 'ABORTED' });
+    await expect(pending).rejects.toMatchObject({ category: 'AMBIGUOUS_PAID_DISPATCH', failure: { reason: { category: 'ABORTED' } } });
     held.resolve(response(played)); client.destroy();
   });
   it('clients retain independent currency, rounds, paid state and destruction', async () => {
     const a = live(queue(response(auth), response({}, 500)).fetch);
-    const b = live(queue(response({ ...auth, balance: { ...balance, currency: 'BTC' } }), response({ ...played, balance: { ...balance, currency: 'BTC' } })).fetch);
+    const b = live(queue(response({ ...auth, balance: { ...balance, currency: 'EUR' } }), response({ ...played, balance: { ...balance, currency: 'EUR' } })).fetch);
     await a.authenticate(); await b.authenticate(); await expect(a.play(wager)).rejects.toBeInstanceOf(StakeSdkError);
-    a.destroy(); const result = await b.play(wager); expect(result.balance.currency).toBe('BTC'); expect(b.session?.round?.betID).toBe(round.betID);
+    a.destroy(); const result = await b.play(wager); expect(result.balance.currency).toBe('EUR'); expect(b.session?.round?.betID).toBe(round.betID);
   });
   it('diagnostics contain no credentials/payloads and cannot invalidate an accepted operation', async () => {
-    const events: unknown[] = []; const client = live(queue(response(auth)).fetch, { diagnostics(event) { events.push(event); throw new Error('observer'); } });
+    const events: import('../src/index.js').StakeDiagnosticEvent[] = []; const client = live(queue(response(auth)).fetch, { diagnostics(event) { events.push(event); throw new Error('observer'); } });
     await client.authenticate(); expect(JSON.stringify(events)).not.toContain('fake-session'); expect(JSON.stringify(events)).not.toContain('USD');
     client.destroy();
   });
@@ -257,26 +257,25 @@ describe('pending mutation persistence', () => {
   });
 });
 describe('additional provider facts and lifecycle boundaries', () => {
-  it('preserves nullable event and independent jurisdiction fields without merging or fallback', async () => {
+  it('publishes canonical jurisdiction and discards unowned provider fields', async () => {
     const client = live(queue(response({ ...auth, round: { ...round, event: null, costMultiplier: 100 },
-      config: { ...config, gameID: 'fake-game', jurisdiction: { disabledBuyFeature: true } },
-      jurisdictionFlags: { disabledTurbo: true } })).fetch);
+      config: { ...config, gameID: 'ignored', betModes: { arbitrary: 1 }, jurisdiction: { ...jurisdiction, disabledBuyFeature: true } },
+      jurisdictionFlags: { disabledTurbo: true }, meta: { private: 1 } })).fetch);
     const session = await client.authenticate();
     expect(session.round?.event).toBeNull(); expect(session.round?.costMultiplier).toBe(100);
-    expect(session.config.gameID).toBe('fake-game'); expect(session.config.jurisdiction).toEqual({ disabledBuyFeature: true });
-    expect(session.jurisdictionFlags).toEqual({ disabledTurbo: true }); client.destroy();
+    expect(session.jurisdiction).toEqual({ ...jurisdiction, disabledBuyFeature: true });
+    expect(session.config).not.toHaveProperty('gameID'); expect(session.config).not.toHaveProperty('betModes');
+    expect(session).not.toHaveProperty('jurisdictionFlags'); expect(session).not.toHaveProperty('meta'); client.destroy();
   });
-  it('conflicting or malformed jurisdiction truth rejects the complete session', async () => {
-    for (const jurisdiction of [{ disabledTurbo: 'true' }, { disabledTurbo: false }]) {
-      const client = live(queue(response({ ...auth, config: { ...config, jurisdiction }, jurisdictionFlags: { disabledTurbo: true } })).fetch);
-      await expect(client.authenticate()).rejects.toMatchObject({ category: 'VALIDATION' }); expect(client.session).toBeUndefined(); client.destroy();
-    }
+  it('root jurisdictionFlags cannot satisfy missing canonical wire jurisdiction', async () => {
+    const client = live(queue(response({ ...auth, config: { ...config, jurisdiction: undefined }, jurisdictionFlags: jurisdiction })).fetch);
+    await expect(client.authenticate()).rejects.toMatchObject({ category: 'VALIDATION' }); expect(client.session).toBeUndefined(); client.destroy();
   });
   it.each(['EVENT', 'END'] as const)('user abort of %s fences further mutations', async operation => {
     const held = deferred<Response>(); let count = 0;
     const client = live(async () => ++count === 1 ? response({ ...auth, round }) : held.promise);
     await client.authenticate(); const controller = new AbortController();
-    const pending = operation === 'EVENT' ? client.recordEvent(round.betID, 'checkpoint', { signal: controller.signal })
+    const pending = operation === 'EVENT' ? client.recordEvent(round.betID, stakeEventId('checkpoint'), { signal: controller.signal })
       : client.endRound(round.betID, { signal: controller.signal }); controller.abort();
     await expect(pending).rejects.toMatchObject({ category: 'ABORTED' });
     await expect(client.endRound(round.betID)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
@@ -284,8 +283,8 @@ describe('additional provider facts and lifecycle boundaries', () => {
   });
   it('event mismatch is validation failure, preserves the round and blocks further mutation', async () => {
     const client = live(queue(response({ ...auth, round }), response({ event: 'other' })).fetch); await client.authenticate();
-    await expect(client.recordEvent(round.betID, 'checkpoint')).rejects.toMatchObject({ category: 'VALIDATION' });
-    expect(client.session?.round?.event).toBeUndefined(); await expect(client.endRound(round.betID)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' }); client.destroy();
+    await expect(client.recordEvent(round.betID, stakeEventId('checkpoint'))).rejects.toMatchObject({ category: 'VALIDATION' });
+    expect(client.session?.round?.event).toBeNull(); await expect(client.endRound(round.betID)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' }); client.destroy();
   });
   it('a codec cannot reenter destroyed client publication', async () => {
     const network = queue(response({ ...auth, round }));

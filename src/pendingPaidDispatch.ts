@@ -1,29 +1,50 @@
+import { STAKE_DISPATCH_PHASE } from './errors.js';
 import { StakeSdkError, STAKE_ERROR_CATEGORY as CATEGORY, STAKE_ERROR_CODE as CODE } from './errors.js';
-import { fields, parseRoundId } from './protocol.js';
-import type { StakeRoundId } from './protocol.js';
+import { fields } from './protocol.js';
+import { stakeBetId, stakeBetMode, stakeEventId } from './domain.js';
+import type { StakeBetId, StakeBetMode, StakeEventId, StakeSessionId } from './domain.js';
+import { MUTATION, JOURNAL } from './vocabulary.js';
 import { stakeAmountMicros, stakeCurrencyCode } from './money.js';
 import type { StakeAmountMicros, StakeCurrencyCode } from './money.js';
-import { text } from './launch.js';
+
 /** Supply sessionStorage/localStorage or an equivalent synchronous store to retain uncertainty across client recreation. */
-export type StakePendingDispatchStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-export type Pending =
-  | { readonly kind: 'NONE' }
-  | { readonly kind: 'PLAY'; readonly amount: StakeAmountMicros; readonly mode: string; readonly currency: StakeCurrencyCode; readonly previous: StakeRoundId | undefined }
-  | { readonly kind: 'EVENT'; readonly betID: StakeRoundId; readonly event: string }
-  | { readonly kind: 'END_ROUND'; readonly betID: StakeRoundId };
+export interface StakePendingDispatchStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+export type StakePendingMutation =
+  | { readonly kind: 'PLAY'; readonly amount: StakeAmountMicros; readonly mode: StakeBetMode; readonly currency: StakeCurrencyCode; readonly previous: StakeBetId | null }
+  | { readonly kind: 'EVENT'; readonly betID: StakeBetId; readonly event: StakeEventId }
+  | { readonly kind: 'END_ROUND'; readonly betID: StakeBetId };
+type Pending = { readonly kind: 'NONE' } | StakePendingMutation;
+const JOURNAL_VERSION = 1;
+type StakePendingDispatchRecordV1 = StakePendingMutation & { readonly version: typeof JOURNAL_VERSION };
+function parsePendingRecord(input: unknown): StakePendingMutation {
+  const value = fields(input);
+  if (value.version !== JOURNAL_VERSION) throw new Error('Unsupported pending journal version');
+  switch (value.kind) {
+    case MUTATION.PLAY:
+      return Object.freeze({ kind: MUTATION.PLAY, amount: stakeAmountMicros(value.amount), mode: stakeBetMode(value.mode),
+        currency: stakeCurrencyCode(value.currency), previous: value.previous === null ? null : stakeBetId(value.previous) });
+    case MUTATION.EVENT: return Object.freeze({ kind: MUTATION.EVENT, betID: stakeBetId(value.betID), event: stakeEventId(value.event) });
+    case MUTATION.END_ROUND: return Object.freeze({ kind: MUTATION.END_ROUND, betID: stakeBetId(value.betID) });
+    default: throw new Error('Invalid pending marker');
+  }
+}
 /** Owns the unresolved mutation, optionally journaled under a cryptographic session-scoped key. */
 export class PendingPaidDispatch {
-  #value: Pending = { kind: 'NONE' };
-  #state: 'UNLOADED' | 'LOADED' | 'DESTROYED' = 'UNLOADED';
+  #value: Pending = { kind: MUTATION.NONE };
+  #state: typeof JOURNAL[keyof typeof JOURNAL] = JOURNAL.UNLOADED;
   #key: string | undefined;
   #storage: StakePendingDispatchStorage | undefined;
   constructor(readonly explicitStorage: StakePendingDispatchStorage | undefined, readonly browserLease: boolean) {}
   get value(): Pending { return this.#value; }
-  #alive(): void { if (this.#state === 'DESTROYED') throw new StakeSdkError(CATEGORY.LIFECYCLE, CODE.DESTROYED, 'Client destroyed'); }
-  async load(base: string, sessionID: string): Promise<void> {
+  #alive(): void { if (this.#state === JOURNAL.DESTROYED) throw new StakeSdkError({ category: CATEGORY.LIFECYCLE, code: CODE.DESTROYED, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Client destroyed'); }
+  async load(base: string, sessionID: StakeSessionId): Promise<void> {
     this.#alive();
-    if (this.#state === 'LOADED') return;
-    if (!this.explicitStorage && !this.browserLease) { this.#state = 'LOADED'; return; }
+    if (this.#state === JOURNAL.LOADED) return;
+    if (!this.explicitStorage && !this.browserLease) { this.#state = JOURNAL.LOADED; return; }
     try {
       this.#storage = this.explicitStorage ?? globalThis.localStorage;
       if (!this.#storage || !globalThis.crypto?.subtle) throw new Error('storage/crypto unavailable');
@@ -33,40 +54,33 @@ export class PendingPaidDispatch {
       const stored = this.#storage.getItem(this.#key);
       if (stored !== null) {
         const input: unknown = JSON.parse(stored);
-        const value = fields(input);
-        if (value.kind === 'PLAY') {
-          this.#value = Object.freeze({ kind: 'PLAY', amount: stakeAmountMicros(value.amount), mode: text(value.mode, 'pending mode'),
-            currency: stakeCurrencyCode(value.currency), previous: value.previous === undefined ? undefined : parseRoundId(value.previous) });
-        } else if (value.kind === 'EVENT') this.#value = Object.freeze({ kind: 'EVENT', betID: parseRoundId(value.betID), event: text(value.event, 'pending event') });
-        else if (value.kind === 'END_ROUND') this.#value = Object.freeze({ kind: 'END_ROUND', betID: parseRoundId(value.betID) });
-        else throw new Error('invalid pending marker');
+        this.#value = parsePendingRecord(input);
       }
-      this.#state = 'LOADED';
+      this.#state = JOURNAL.LOADED;
     } catch (error) {
       if (error instanceof StakeSdkError && error.category === CATEGORY.LIFECYCLE) throw error;
-      throw new StakeSdkError(CATEGORY.SESSION, CODE.PENDING_STORAGE_FAILURE, 'Pending mutation storage unavailable or corrupt');
+      throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Pending mutation storage unavailable or corrupt');
     }
   }
-  prepare(value: Pending): void {
+  prepare(value: StakePendingMutation): void {
     this.#alive();
-    if (this.#state !== 'LOADED' || this.#value.kind !== 'NONE') throw new StakeSdkError(CATEGORY.AMBIGUOUS_PAID_DISPATCH,
-      CODE.RECONCILIATION_REQUIRED, 'Pending mutation must be reconciled');
-    try { if (this.#storage && this.#key) this.#storage.setItem(this.#key, JSON.stringify(value)); }
-    catch { throw new StakeSdkError(CATEGORY.SESSION, CODE.PENDING_STORAGE_FAILURE, 'Cannot record pending mutation'); }
+    if (this.#state !== JOURNAL.LOADED || this.#value.kind !== MUTATION.NONE) throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Pending journal not ready');
+    try { if (this.#storage && this.#key) { const record: StakePendingDispatchRecordV1 = { version: JOURNAL_VERSION, ...value }; this.#storage.setItem(this.#key, JSON.stringify(record)); } }
+    catch { throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Cannot record pending mutation'); }
     this.#value = Object.freeze(value);
   }
   clear(): void {
     this.#alive();
     try { if (this.#storage && this.#key) this.#storage.removeItem(this.#key); }
-    catch { throw new StakeSdkError(CATEGORY.SESSION, CODE.PENDING_STORAGE_FAILURE, 'Cannot clear pending mutation'); }
-    this.#value = { kind: 'NONE' };
+    catch { throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Cannot clear pending mutation'); }
+    this.#value = { kind: MUTATION.NONE };
   }
   discardUndispatched(): void {
     // A caller holding typed NOT_DISPATCHED evidence may remove its prepared journal during teardown.
     try { if (this.#storage && this.#key) this.#storage.removeItem(this.#key); }
-    catch { throw new StakeSdkError(CATEGORY.SESSION, CODE.PENDING_STORAGE_FAILURE, 'Cannot discard undispatched mutation'); }
-    this.#value = { kind: 'NONE' };
+    catch { throw new StakeSdkError({ category: CATEGORY.SESSION, code: CODE.PENDING_STORAGE_FAILURE, dispatch: STAKE_DISPATCH_PHASE.NOT_DISPATCHED }, 'Cannot discard undispatched mutation'); }
+    this.#value = { kind: MUTATION.NONE };
   }
   /** Destruction must never erase an uncertain dispatch marker. */
-  destroy(): void { this.#state = 'DESTROYED'; }
+  destroy(): void { this.#state = JOURNAL.DESTROYED; }
 }

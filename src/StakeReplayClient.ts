@@ -1,27 +1,36 @@
 import { invalid } from './errors.js';
-import { STAKE_LAUNCH_MODE, providerUrl, text } from './launch.js';
+import { STAKE_LAUNCH_MODE, providerUrl } from './launch.js';
 import type { StakeReplayLaunch } from './launch.js';
-import { ENDPOINT, parseReplay } from './protocol.js';
+import { stakeGameId, stakeGameVersion, stakeBetMode, stakeReplayEventId, stakeLanguage, stakeDevice } from './domain.js';
+import { requestPath } from './wire.js';
+import type { StakeEndpointRequest } from './wire.js';
+import { OPERATION } from './vocabulary.js';
+import { parseReplayResponse } from './protocol.js';
 import type { StakeGameStateCodec, StakeReplayResult } from './protocol.js';
 import { Requests } from './request.js';
 import type { StakeRequestOptions, StakeNetworkOptions } from './request.js';
-export interface StakeReplayClientOptions<T> extends StakeNetworkOptions {
+export interface StakeReplayClientOptions<T> extends Pick<StakeNetworkOptions, 'fetch' | 'timeoutMs'> {
   readonly launch: StakeReplayLaunch; readonly codec: StakeGameStateCodec<T>;
 }
 export class StakeReplayClient<T> {
   readonly #requests: Requests;
-  readonly #path: string;
+  readonly #request: Extract<StakeEndpointRequest, { readonly operation: typeof OPERATION.REPLAY }>;
   readonly #codec: StakeGameStateCodec<T>;
   constructor(options: StakeReplayClientOptions<T>) {
     if (options.launch.kind !== STAKE_LAUNCH_MODE.REPLAY) invalid('replay launch');
     if (!options.codec || typeof options.codec.parse !== 'function') invalid('codec');
     this.#codec = Object.freeze({ parse: options.codec.parse.bind(options.codec) });
     this.#requests = new Requests(providerUrl(options.launch.rgsUrl, true), options);
-    this.#path = `${ENDPOINT.REPLAY}/${[options.launch.game, options.launch.version, options.launch.mode, options.launch.event]
-      .map(value => { text(value, 'replay identity'); if (value === '.' || value === '..') invalid('replay path identity'); return encodeURIComponent(value); }).join('/')}`;
+    stakeLanguage(options.launch.lang); stakeDevice(options.launch.device);
+    if (typeof options.launch.social !== 'boolean') invalid('social');
+    this.#request = Object.freeze({ operation: OPERATION.REPLAY, identity: Object.freeze({
+      game: stakeGameId(options.launch.game), version: stakeGameVersion(options.launch.version),
+      mode: stakeBetMode(options.launch.mode), event: stakeReplayEventId(options.launch.event),
+    }) });
+    requestPath(this.#request);
   }
   acquire(options: StakeRequestOptions = {}): Promise<StakeReplayResult<T>> {
-    return this.#requests.run('REPLAY', this.#path, undefined, input => parseReplay(input, this.#codec), options);
+    return this.#requests.run(this.#request, input => parseReplayResponse(input, this.#codec), options);
   }
   destroy(): void { this.#requests.destroy(); }
 }

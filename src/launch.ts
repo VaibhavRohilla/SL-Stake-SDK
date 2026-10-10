@@ -1,23 +1,26 @@
+import { text, stakeLanguage, stakeDevice, stakeSessionId, stakeGameId, stakeGameVersion, stakeBetMode, stakeReplayEventId, STAKE_LANGUAGE, STAKE_DEVICE } from './domain.js';
+import type { StakeLanguage, StakeDevice, StakeSessionId, StakeGameId, StakeGameVersion, StakeBetMode, StakeReplayEventId } from './domain.js';
 import { invalid } from './errors.js';
 import { stakeAmountMicros, stakeCurrencyCode } from './money.js';
 import type { StakeAmountMicros, StakeCurrencyCode } from './money.js';
-export const STAKE_LAUNCH_MODE = { LIVE: 'LIVE', REPLAY: 'REPLAY' } as const;
+export const STAKE_LAUNCH_MODE = Object.freeze({ LIVE: 'LIVE', REPLAY: 'REPLAY' } as const);
+export type StakeLaunchMode = typeof STAKE_LAUNCH_MODE[keyof typeof STAKE_LAUNCH_MODE];
 interface LaunchContext {
   readonly rgsUrl: string;
-  readonly lang?: string;
-  readonly device?: 'desktop' | 'mobile';
-  readonly social?: boolean;
+  readonly lang: StakeLanguage;
+  readonly device: StakeDevice;
+  readonly social: boolean;
 }
 export interface StakeLiveLaunch extends LaunchContext {
   readonly kind: typeof STAKE_LAUNCH_MODE.LIVE;
-  readonly sessionID: string;
+  readonly sessionID: StakeSessionId;
 }
 export interface StakeReplayLaunch extends LaunchContext {
   readonly kind: typeof STAKE_LAUNCH_MODE.REPLAY;
-  readonly game: string;
-  readonly version: string;
-  readonly mode: string;
-  readonly event: string;
+  readonly game: StakeGameId;
+  readonly version: StakeGameVersion;
+  readonly mode: StakeBetMode;
+  readonly event: StakeReplayEventId;
   readonly currency?: StakeCurrencyCode;
   readonly amount?: StakeAmountMicros;
 }
@@ -31,10 +34,6 @@ export function providerUrl(input: string, allowHttp = false): string {
   if ((url.protocol !== 'https:' && !(allowHttp && url.protocol === 'http:')) ||
       url.username || url.password || url.search || url.hash) invalid('rgs_url');
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
-}
-export function text(input: unknown, field: string): string {
-  if (typeof input !== 'string' || input.length === 0 || input !== input.trim() || /[\u0000-\u001f]/.test(input)) invalid(field);
-  return input;
 }
 /** Accepts an absolute URL, query string, URL, or URLSearchParams; copies and validates immediately. */
 export function parseStakeLaunch(input: unknown, options: StakeLaunchOptions = {}): StakeLaunch {
@@ -53,13 +52,12 @@ export function parseStakeLaunch(input: unknown, options: StakeLaunchOptions = {
   const lang = params.get('lang');
   const device = params.get('device');
   const social = params.get('social');
-  if (device !== null && device !== 'mobile' && device !== 'desktop') invalid('device');
   if (social !== null && social !== 'true' && social !== 'false') invalid('social');
   const context: LaunchContext = {
     rgsUrl: providerUrl(text(params.get('rgs_url'), 'rgs_url'), options.allowHttp),
-    ...(lang === null ? {} : { lang: text(lang, 'lang') }),
-    ...(device === null ? {} : { device }),
-    ...(social === null ? {} : { social: social === 'true' }),
+    lang: lang === null ? STAKE_LANGUAGE.EN : stakeLanguage(lang),
+    device: device === null ? STAKE_DEVICE.DESKTOP : stakeDevice(device),
+    social: social === 'true',
   };
   if (flag === 'true') {
     if (params.has('sessionID')) invalid('mixed live/replay launch');
@@ -67,12 +65,12 @@ export function parseStakeLaunch(input: unknown, options: StakeLaunchOptions = {
     if (amount !== null && !/^(0|[1-9][0-9]*)$/.test(amount)) invalid('replay amount');
     const currency = params.get('currency');
     return Object.freeze({ ...context, kind: STAKE_LAUNCH_MODE.REPLAY,
-      game: text(params.get('game'), 'game'), version: text(params.get('version'), 'version'),
-      mode: text(params.get('mode'), 'mode'), event: text(params.get('event'), 'event'),
+      game: stakeGameId(params.get('game')), version: stakeGameVersion(params.get('version')),
+      mode: stakeBetMode(params.get('mode')), event: stakeReplayEventId(params.get('event')),
       ...(currency === null ? {} : { currency: stakeCurrencyCode(currency) }),
       ...(amount === null ? {} : { amount: stakeAmountMicros(Number(amount)) }),
     });
   }
   if (['game', 'version', 'mode', 'event', 'amount'].some(key => params.has(key))) invalid('replay fields in live launch');
-  return Object.freeze({ ...context, kind: STAKE_LAUNCH_MODE.LIVE, sessionID: text(params.get('sessionID'), 'sessionID') });
+  return Object.freeze({ ...context, kind: STAKE_LAUNCH_MODE.LIVE, sessionID: stakeSessionId(params.get('sessionID')) });
 }

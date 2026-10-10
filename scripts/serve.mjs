@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 const balance = { amount: 10_000_000, currency: 'USD' };
 const round = { betID: 'fake-browser-round', amount: 1_000_000, active: true, mode: 'BASE', state: { value: 7 }, payout: 2_000_000 };
-const auth = { balance, round: null, config: { minBet: 100_000, maxBet: 10_000_000, stepBet: 100_000, defaultBetLevel: 1_000_000, betLevels: [100_000, 1_000_000] } };
+const auth = { balance, round: null, config: { minBet: 100_000, maxBet: 10_000_000, stepBet: 100_000, defaultBetLevel: 1_000_000, betLevels: [100_000, 1_000_000], jurisdiction: { socialCasino: false, disabledFullscreen: false, disabledTurbo: false, disabledSuperTurbo: false, disabledAutoplay: false, disabledSlamstop: false, disabledSpacebar: false, disabledBuyFeature: false, displayNetPosition: false, displayRTP: false, displaySessionTimer: false, minimumRoundDuration: 0 } } };
 createServer(async (request, response) => {
   const path = new URL(request.url, 'http://localhost').pathname;
   if (path.startsWith('/sdk/') && /^\/sdk\/[A-Za-z]+\.js$/.test(path)) {

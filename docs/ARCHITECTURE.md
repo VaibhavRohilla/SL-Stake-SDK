@@ -1,114 +1,121 @@
 # Stake SDK architecture and protocol authority
 
-STAKE-SDK-1: **IMPLEMENTED / READY FOR HOSTILE AUDIT**. One standalone package, zero runtime dependencies. This document is the repository's canonical maintainer record. Independent hostile audit is the next batch; no commercial freeze/certification or real game binding is claimed.
+STAKE-SDK-1T: **TYPE/PROTOCOL HARDENED — READY FOR HOSTILE AUDIT**. Starting candidate: `codex/stake-sdk-1` / `c62aba6a41603d74d1b9be6120b24e22e304b4e7`. One standalone package, zero runtime dependencies. Independent hostile audit remains the next batch; no commercial freeze/certification or real game binding is claimed. The exact candidate is the commit containing this completed record; qualification applies to its source/package contents.
 
 ## Source identity and evidence
 
-Read-only historical source: SL-Engine `main` / `b3ceecace4704b56fdde5d77f9eb44785e3c2ed3`, package `packages/stake-dist`. Read StakeSchemas, StakeLaunchParams, StakeTransport, StakeDistribution, StakePendingPaidDispatch, StakeErrorMapper, package manifest and contract fixtures, including walletPlay.currency and authoritativeBetPolicy. Current SL-Engine base `9cd4cd788607fc9f8fdae700eb3a671f1cc86424` / `revampEngine` has user-owned HOST-ACK-1 changes. None are part of this repository or implementation.
+Historical evidence retained from STAKE-SDK-1: SL-Engine `main` / `b3ceecace4704b56fdde5d77f9eb44785e3c2ed3`, `packages/stake-dist`, established numeric/string bet IDs, required production play currency and amount interpretation of defaultBetLevel. These are historical evidence, not fresh real-provider proof. No SL-Engine source was changed by STAKE-SDK-1T.
 
-The user explicitly admits this standalone batch and defers SL-Engine recertification; that instruction overrides the older next-batch restriction in SL-Engine's current architecture note. SL-Engine itself is not modified.
+Official sources re-inspected on 2026-10-10:
 
-Upstream sources inspected on 2026-10-10:
+- [API overview](https://github.com/engineio/docs/blob/main/src/routes/docs/api/%2Bpage.svx).
+- [Authenticate](https://github.com/engineio/docs/blob/main/src/routes/docs/api/authenticate/%2Bpage.svx).
+- [Play](https://github.com/engineio/docs/blob/main/src/routes/docs/api/play/%2Bpage.svx).
+- [Event](https://github.com/engineio/docs/blob/main/src/routes/docs/api/event/%2Bpage.svx).
+- [End round](https://github.com/engineio/docs/blob/main/src/routes/docs/api/end-round/%2Bpage.svx).
+- [Bet replay](https://github.com/engineio/docs/blob/main/src/routes/docs/api/bet-replay/%2Bpage.svx).
+- [TS client types](https://github.com/engineio/ts-client/blob/main/src/types.ts) and [client implementation](https://github.com/engineio/ts-client/blob/main/src/client.ts).
+- [Web SDK requests](https://github.com/engineio/web-sdk/blob/main/packages/rgs-requests/src/rgs-requests.ts), [Authenticate consumer](https://github.com/engineio/web-sdk/blob/main/packages/components-shared/src/components/Authenticate.svelte), [launch normalization](https://github.com/engineio/web-sdk/blob/main/packages/state-shared/src/stateUrl.svelte.ts), [schema](https://github.com/engineio/web-sdk/blob/main/packages/rgs-fetcher/src/schema.ts). The downloaded web SDK snapshot resolves to `1843d60` (GitHub archive prefix); mutable links are observations, not a pinned normative spec.
+- [Public RGS vocabulary](https://stake-engine.com/docs/rgs) and [wallet](https://stake-engine.com/docs/rgs/wallet).
 
-- [RGS wallet](https://stake-engine.com/docs/rgs/wallet).
-- [Official API authenticate source](https://github.com/engineio/docs/blob/main/src/routes/docs/api/%2Bpage.svx) and endpoint pages beneath that route.
-- [Official play source](https://github.com/engineio/docs/blob/main/src/routes/docs/api/play/%2Bpage.svx).
-- [Official event source](https://github.com/engineio/docs/blob/main/src/routes/docs/api/event/%2Bpage.svx).
-- [Official end-round source](https://github.com/engineio/docs/blob/main/src/routes/docs/api/end-round/%2Bpage.svx).
-- [Official replay source](https://github.com/engineio/docs/blob/main/src/routes/docs/api/bet-replay/%2Bpage.svx).
-- [Official TS client types](https://github.com/engineio/ts-client/blob/main/src/types.ts).
-- [Official web SDK authenticate consumer](https://github.com/engineio/web-sdk/blob/main/packages/components-shared/src/components/Authenticate.svelte).
-- [Web Locks request contract](https://developer.mozilla.org/en-US/docs/Web/API/LockManager/request).
+No new real account transaction was performed. Local test credentials are fake. Published documents and client implementations conflict in places; the classifications below prevent claiming universal wire guarantees from one example.
 
-Upstream references are mutable observations, not a pinned official normative spec. Existing archaeology fixtures use fake credentials and establish implementation behavior, not real provider certification. No new real account transaction was performed.
+## TYPE AUTHORITY
 
-## Ownership
+External wire/storage input is `unknown` → pure parser/validator → exact immutable Stake domain → normal SDK runtime. `unknown` is confined to launch/identity/money validators, response parsers, title codec/plain-data validation and storage/network ingress. Local `Record<string, unknown>` exists only in the internal object-narrowing helper and cannot escape through public results. No public generic provider bag, raw wire DTO or schema-library type exists.
 
-| Concern | Owner | Boundary |
+Title state has no TypeScript index-signature constraint. Runtime supports exactly null, boolean, finite number, string, dense array and plain object (ordinary or null prototype) with enumerable string data properties. Cycles, undefined, nonfinite numbers, BigInt, symbols/functions, accessors/hidden properties, decorated/sparse arrays, Date/Map/Set/ArrayBuffer/typed arrays/classes are rejected before cloning. Shared acyclic references are supported. A validated copy is recursively frozen; original codec output remains caller-owned.
+
+## Current ownership and dependencies
+
+| Concern | Owner | Dependencies and boundary |
 |---|---|---|
-| Launch | parseStakeLaunch | External URL/query → immutable exact live/replay union |
-| Live session | StakeLiveClient | Validated session, operation serialization, mutation admission, publication |
-| Replay | StakeReplayClient | Unauthenticated replay acquisition only; no live methods |
-| HTTP lifetime | Requests (internal) | Fetch/JSON as unknown → one parser; bounded abort/timeout/body/destroy race |
-| Provider facts | protocol pure parsers (internal) | Exact immutable amounts, balances, config, round and response envelopes |
-| Game-state meaning | injected StakeGameStateCodec | Application validation; plain data copied/deep-frozen before publication |
-| Unresolved mutation | PendingPaidDispatch (internal) | One pending discriminant, optional write-before-dispatch journal; no retry API |
-| Browser exclusion | SessionLease (internal) | Opt-in same-origin Web Locks policy, independent of wire validation |
+| Launch/domain vocabulary | parseStakeLaunch and pure domain/money validators | External input → exact frozen live/replay launch; public validated identity constructors |
+| Live session | StakeLiveClient | Requests, codec, PendingPaidDispatch, optional SessionLease; serialization/admission/reconciliation/publication remain local |
+| Replay | StakeReplayClient | Requests, codec, validated replay identities; no authentication/mutation/lease/journal/diagnostics public options |
+| HTTP lifetime | Requests (internal) | Exact endpoint request union, fetch, timeout/abort/destroy, JSON boundary and endpoint parser |
+| Provider facts | protocol pure parsers (internal) | Domain/money validators and title codec; never raw JSON publication |
+| Game-state meaning | injected StakeGameStateCodec | Only title owns meaning; SDK validates supported value envelope and freezes a copy |
+| Pending uncertainty | PendingPaidDispatch (internal) | Exact mutation union, synchronous storage and SHA-256 session key; V1 validation, no credentials or retry |
+| Browser exclusion | SessionLease (internal) | Opt-in same-origin Web Locks; NONE/WEB_LOCKS policy, no heartbeat/TTL/storage lease |
+| Failures/observations | StakeSdkError and live diagnostic callback | Frozen category/code union and exact safe facts; observers cannot determine protocol truth |
 
-Every client owns its requests, session, mutation and destruction. No mutable global runtime state, schema exports, transport exports, provider registry or renderer dependency exists. Public exports are limited to client creation/classes, launch/money constructors, exact result/config/option types, error vocabulary and diagnostic/policy contracts.
+One owner remains per concern. The new domain/vocabulary/wire modules contain definitions and pure functions, not additional runtime authorities. No registry, manager, factory, schema dependency, process-global mutable state, renderer or engine binding was introduced. Package root is the only public import path.
 
 ## Protocol classification ledger
 
-| Topic | Classification | Implemented rule/evidence |
+| Topic | Classification | Accepted rule and evidence |
 |---|---|---|
-| Auth endpoint | PROVEN FACT | POST /wallet/authenticate with sessionID; historical transport and upstream docs agree. Language is launch context; no invented mandatory auth field. |
-| Active round | PROVEN FACT | Authenticate returns one round or null; use that operation to refresh recovery truth. Preserve last completed round too. |
-| Required recovery facts | ARCHITECTURE DECISION | Non-null rounds require safe string/numeric betID, safe micros amount, boolean active, mode and codec state. Missing economics/identity fails closed even where upstream typings make amount optional. |
-| Single active round | INFERENCE | Session-scoped event/end and one auth round imply one current unresolved round. SDK serializes operations and admits no second play while active. This is not a claim about every possible future provider flow. |
-| Round currency | ARCHITECTURE DECISION | Currency comes from the associated authenticated balance/session. Any supplied round.currency must agree. No synthetic currency. |
-| Micros | PROVEN FACT | Historical safe-integer schema and accepted production contract: 1 major unit = 1,000,000 micros; nonnegative safe integers only. |
-| Default bet | ARCHITECTURE DECISION | defaultBetLevel is micros, exposed as defaultBetAmount, exact member of betLevels. Historical source supports it; some older upstream examples described index semantics. Index mode is deliberately rejected. |
-| Required play currency | ARCHITECTURE DECISION | Always send authenticated balance.currency with sessionID, amount and mode. Accepted handoff/historical transport requires this. Official play example inspected omits currency, so official guarantee is NOT claimed. |
-| Currency syntax | ARCHITECTURE DECISION | Nonempty uppercase compact provider code, 2–12 alphanumeric characters. Includes social/crypto codes, not a frozen fiat ISO whitelist. Authentication supplies identity; SDK never selects a currency. |
-| Bet admission | ARCHITECTURE DECISION | min/max and positive step validated; unique advertised levels in range; play requires exact membership. No rounded amount or title-specific mode default. |
-| Round ID | PROVEN FACT + DECISION | Provider uses betID. Historical schema accepts numeric/string identities. Preserve supplied form; safe numeric/nonempty string required, never synthesize. |
-| Event wire | PROVEN FACT | POST /bet/event with sessionID and event. Response echoes event. Round is session-scoped; betID is required/checks locally, not sent as an invented field. |
-| End wire | PROVEN FACT | POST /wallet/end-round with sessionID; returns balance. Locally require current active betID. SDK does not choose presentation timing. |
-| Replay | PROVEN FACT | Unauthenticated GET /bet/replay/{game}/{version}/{mode}/{event}; state plus payout/cost multipliers. Amount/currency launch display metadata are optional in current upstream docs. Old slot adapter required currency for engine Money; that coupling is rejected. |
-| Multipliers | ARCHITECTURE DECISION | Preserve finite nonnegative provider multiplier values; no scaling or economic calculation. They are not StakeAmountMicros. |
-| Event null | PROVEN FACT | Official web SDK round example uses event:null. Preserve null independently of absent/unset and never invent a checkpoint. |
-| Jurisdiction shape | PROVEN FACT / CONFLICT | Official TS client declares root jurisdictionFlags; official web consumer reads config.jurisdiction. Preserve both separately if supplied, validate each, reject conflicting overlapping facts. Neither fills the other. No compatibility interpretation or default flags. Exact provider spelling disabledSlamstop/disabledBuyFeature is used. |
-| Business rejection | PROVEN FACT + DECISION | Historical known ERR_VAL/IPB/IS/ATE/GLE/LOC prove nonacceptance only on validated HTTP 4xx error-string envelopes. Unknown/5xx/malformed bodies remain uncertain. No nested legacy parser. |
-| Null after uncertain dispatch | UNRESOLVED QUESTION | No evidence proves it means nonacceptance. Keep pending fence; do not clear/retry. |
-| Matching reconciliation | INFERENCE + DECISION | Same session, new betID, exact pending amount/mode/currency under exclusive ownership supports adoption. Previous betID cannot reconcile. No provider idempotency key/correlation is invented. |
-| Finalization uncertainty | ARCHITECTURE DECISION | No resend. Same betID with explicit inactive truth resolves end; echoed checkpoint resolves event. Null cannot clear uncertainty. |
-| Browser lease | ARCHITECTURE DECISION | Opt-in Web Locks; no TTL/heartbeat or storage lease race. Browser releases lock on context termination; stale contexts cannot steal ownership. Unsupported facilities fail closed. Scope is one browser origin/provider/session. |
-| Reload uncertainty | ARCHITECTURE DECISION | Browser lease enables localStorage pending journal; optional injected storage in other runtimes. Write before fetch, clear only after validated truth, retain on destroy. SHA-256 key; no credential persistence. Default nonbrowser state is instance-local. |
+| Auth wire | PROVEN FACT + PRODUCTION CONTRACT DECISION | Both official clients send sessionID/language. FNX sends both, normalizing absent launch lang to en. Public Authenticate docs list only sessionID; mandatory language is not a universal docs claim. |
+| Language/device | PROVEN FACT + PRODUCTION CONTRACT DECISION | Accepted vocabularies are the TS client's 16 languages and desktop/mobile. Defaults en/desktop match its implementation. Public RGS docs additionally list da; no production support is inferred from that discrepancy. |
+| Social | PROVEN FACT + PRODUCTION CONTRACT DECISION | Official web SDK checks social === true; absent → false. SDK rejects other supplied text instead of coercing it. Social is launch context, not a substitute for authenticated jurisdiction. |
+| Currency | PROVEN FACT + PRODUCTION CONTRACT DECISION | Closed 36-code vocabulary from official TS client, including XGC/XSC. Newer public RGS docs list additional codes (including XEC); no archived/live FNX evidence admits them in this candidate. Extension requires deliberate contract change; no permissive regex remains. |
+| Session/identities | PRODUCTION CONTRACT DECISION | Branded exact session, numeric/string bet, game-defined mode, event and replay IDs. Reject empty/trimmed/control strings without rewriting; numeric bet ID is nonnegative safe integer. No arbitrary max length or UUID constraint. |
+| Round lifecycle | PROVEN FACT + PRODUCTION CONTRACT DECISION | Auth may return active or last completed round. Active requires amount/ID/mode/state. Completed amount may be omitted (TS client optionality) and normalizes to null. New play requires amount even when completed, protecting exact request association. |
+| Missing round facts | PRODUCTION CONTRACT DECISION | Omitted/null event normalizes to null (no checkpoint supplied); omitted payout/multipliers normalize to null (fact unavailable). Supplied malformed facts reject. No event 0 or economics are invented. |
+| Round currency | PRODUCTION CONTRACT DECISION | Associated authenticated balance is currency authority; supplied round.currency must agree. |
+| Money | PROVEN FACT | Six-decimal Stake micros. All amounts are nonnegative safe integers with no rounding/coercion. |
+| Default bet | PRODUCTION CONTRACT DECISION | defaultBetLevel wire → amount → defaultBetAmount; exact member of betLevels. Current docs/web SDK examples support amount semantics. Historical index descriptions remain rejected evidence history, not a second parser. |
+| Bet admission | PRODUCTION CONTRACT DECISION | Positive min/step, min ≤ max, nonempty unique levels in range, default membership; preserve provider order. Exact level membership is the single play admission predicate. No competing modulo/step-only path. |
+| Play currency | PRODUCTION CONTRACT DECISION | FNX sends sessionID/amount/mode/currency, deriving currency from session. Historical integration and official web SDK requestBet support it. Public Play docs and TS client omit currency. No dual shape/retry or caller currency. |
+| Event/end | PROVEN FACT | Event wire is sessionID/event and exact echo; end wire is sessionID and returned balance. betID is a local active-round guard only. |
+| Zero payout | PROVEN FACT | Official Authenticate/End docs establish RGS auto-completion; returned inactive rounds permit next play without end-round. No slot timing/economic policy added. |
+| Replay | PROVEN FACT | Unauthenticated GET with four independently encoded identities; codec state plus finite nonnegative multipliers. Optional launch amount/currency are display metadata only. |
+| Jurisdiction wire | PROVEN FACT | config.jurisdiction only. Official TS client.ts reads that wire and constructs root jurisdictionFlags itself. Alternate root-wire parser removed. All 11 flags plus duration required; root/unowned fields are discarded. |
+| Duration unit | UNRESOLVED | Official docs/types/schema expose number and zero examples, without establishing milliseconds or seconds. StakeMinimumRoundDuration is an opaque nonnegative safe-integer provider value; no conversion/timing interpretation. Provider unit confirmation remains required before consumer scheduling. |
+| Provider errors | PROVEN FACT + PRODUCTION CONTRACT DECISION | Eight known codes; only the six documented client rejection codes on HTTP 4xx prove nonacceptance. ERR_GEN/ERR_MAINTENANCE, unknown/5xx/malformed payloads remain uncertain. Unknown codes/messages are discarded. |
+| Single active round | INFERENCE | Session-scoped event/end plus single authenticate round support serialized single-round client admission; no universal future provider-flow claim. |
+| Play reconciliation | INFERENCE + PRODUCTION CONTRACT DECISION | New betID plus exact pending amount/mode/authenticated currency permits adoption. Previous ID, null round or completed round with absent amount cannot clear uncertainty. |
+| Null after dispatch | UNRESOLVED | No proof of nonacceptance; retain fence and require provider/operator truth. |
+| Event/end reconciliation | PRODUCTION CONTRACT DECISION | Same round ID plus exact checkpoint or explicit inactive status. No resend or null-round inference. |
+| Journal/lease | PRODUCTION CONTRACT DECISION | Version-1 exact mutation record, write before fetch, reject unknown/missing versions without deleting; no credentials. Web Locks are browser policy, distinct from protocol. |
 
-## Dispatch and lifetime
+## Request and failure models
 
-Public paid status: READY → DISPATCHING → CONFIRMED, or AMBIGUOUS → RECONCILING → CONFIRMED/AMBIGUOUS; destruction is terminal DESTROYED. Requests independently carry NOT_DISPATCHED → MAY_HAVE_DISPATCHED → RESPONSE_RECEIVED. Fetch invocation is the conservative possible-dispatch boundary; its rejection cannot prove the network never sent bytes.
+Internal StakeEndpointRequest is a discriminated union whose operation fixes its exact body/identity. Requests owns network lifetime and cannot be called with arbitrary endpoint/body pairs. Endpoint response parsers are parseAuthenticateResponse, parsePlayResponse, parseEventResponse, parseEndRoundResponse, parseReplayResponse; parseProviderError classifies error envelopes before endpoint normalization.
 
-Validation/lease/journal failure or an already-aborted signal before fetch does not create ambiguity. Paid failures after possible dispatch wrap the typed underlying category in AMBIGUOUS_PAID_DISPATCH. No string matching, automatic retry, retry flag or second wire shape exists. Pending facts are retained through reconciliation failure. Event/end uncertainty also blocks further mutations.
+StakeSession has id/balance/config/jurisdiction/round. StakeRound is active/completed; StakePlayedRound additionally makes completed play amount required. All provider objects/arrays are copied where needed and frozen. Current client session is an immutable snapshot; undefined means unauthenticated or destroyed.
 
-All operations support AbortSignal. Network timeout includes response-body parsing. Owned abort races fence even fetch implementations ignoring signals; pre-/post-parse and publication checks reject destroy/reentrant codecs. Web Locks ifAvailable cannot be combined with platform signal: the nonqueued callback is manually fenced against abort/destroy. Application diagnostic exceptions are deliberately isolated because observers do not determine protocol truth.
+StakeSdkFailure pairs category with valid codes. Protocol failures carry known/unrecognized/malformed provider classification or null (no provider envelope). Business rejection carries a known client-rejection code. PAID_DISPATCH_UNCERTAIN requires a dispatched phase, immutable exact pending mutation and typed reason. RECONCILIATION_REQUIRED requires pending facts and NOT_DISPATCHED. Human messages/raw provider messages/transport causes are never program authority. Safe category/code/dispatch getters derive from failure; kind-specific optional fields were removed.
 
-Immutable session snapshots remain historical provider facts until a validated replacement. Concurrent live operations fail BUSY instead of racing. Requests use redirect:error, credentials:omit and cache:no-store, and do not retain raw response/cause/provider messages in public errors.
+Pending union: PLAY(amount/mode/currency/previous bet ID or null), EVENT(bet ID/event), END_ROUND(bet ID); NONE is private absence state. Journal persists version:1 plus exactly those facts. previous:null means no preceding admitted round. Storage getItem null means no journal. Browser NONE and absent policy both mean no lock; WEB_LOCKS opts in. Replay cannot accept live policy/diagnostics options.
 
-## Removed/rejected architecture
+Public paid status remains READY → DISPATCHING → CONFIRMED or AMBIGUOUS → RECONCILING → CONFIRMED/AMBIGUOUS; DESTROYED is terminal. Internal lifecycle/operation/lease/journal/interruption constants are not exported through the package root. Dispatch phase is public NOT_DISPATCHED/MAY_HAVE_DISPATCHED/RESPONSE_RECEIVED. Diagnostics are started/finished/failed with an exact operation and required failure category; no metadata bag.
 
-No code was ported wholesale. Rejected: DistributionAdapter, renderer/engine imports, engine Money conversion, creditedMoney, mapped books/steps, slot event cursor, synthetic betID, recovery wager fallback, USD default, default-bet index/amount dual interpretation, currency fallback/retry, universal provider hierarchy, heartbeat/localStorage lease ownership, legacy nested error parser. Historical source remains only in its original repository; it is not copied here.
+## Removed architecture record
 
-## Capability envelope and exclusions
+STAKE-SDK-1 retained exclusions: DistributionAdapter, renderer/engine imports, engine Money conversion, creditedMoney, mapped books/steps, slot cursor, synthetic IDs, recovery wager fallback, USD default, default-index dual parsing, currency retry, universal provider hierarchy, heartbeat/storage lease and nested legacy error parsing.
 
-Supported batch: live/replay launch, authentication, one active round recovery, paid play, generic event checkpoint, end-round, replay, exact immutable typed game state, safe amounts/currency/config, typed errors, abort/timeout/destroy, uncertain dispatch/reconciliation, optional browser exclusivity and pending journal, ESM/DTS and package-consumer proofs.
+STAKE-SDK-1T removed: permissive currency brand/regex; raw string session/mode/event/replay identities; naked string|number StakeRoundId; optional round and jurisdiction field soup; config.gameID publication; alternate root jurisdictionFlags wire path; StakeJurisdictionFlags/StakePlayOptions/StakeDispatchState/StakeBrowserSessionLease/StakeDiagnostic public types; positional optional providerCode/reason error construction; unversioned journal parsing; arbitrary Requests operation/path/body pairing. No forwarding aliases or compatibility parser remain.
 
-Intentional exclusions: generic provider API, live wallet balance polling, game-specific betModes bags, custom server DTO passthrough, operator-wide cross-device lock, financial ledger, provider idempotency invention, presentation/economic mapping, codec Maps/Sets/class instances, real provider credentials and deployment/publication. These are not hidden fallback paths. Applications bind this SDK to their game independently.
+## Capability envelope and remaining migration
 
-## Qualification and next batch
+Supported: exact live/replay launch, typed identities, authentication, active/completed recovery, paid play, checkpoint/finalization, replay, strict immutable provider/title data, typed failures, timeout/abort/destroy, uncertain reconciliation, optional browser lease/journal, ESM/DTS and installed consumer. Public title interfaces need no index signatures. State lifecycle and publication laws remain in existing owners.
 
-Permanent behavior tests cover launch/money/currency/config, auth/play/recovery/event/end, codec immutability, typed rejection/ambiguity, no retry, stalled bodies/timeouts, abort/destroy/late/reentrant publication, operation overlap, persistence/storage faults, and isolated clients. HTTP integration uses real platform fetch against a local fixture server. Chromium proves native module/fetch interactions, lifecycle fencing, cross-tab lock/release, journal recreation and replay bypass. Packed tarball proof installs into an external temporary consumer, compiles DTS/public imports, runs generated ESM, and rejects private subpath imports.
+Excluded: generic provider API, wallet polling, provider metadata passthrough, title betModes interpretation, operator-wide device/origin lock, financial ledger/idempotency invention, game presentation/economic mapping, SL-Engine binding, unsupported codec values and consumer timing interpretation of unconfirmed duration units.
 
-Commands: build, typecheck, lint, test, test:integration, test:browser, test:consumer, pack:verify, doctor. Doctor is static only. pack:verify delegates to the one consumer/package proof implementation.
+Remaining migration: NONE in this batch. Remaining evidence questions: confirm duration unit, expanded docs vocabulary admission and archived/live play currency. These are explicit evidence limits; no fallback or invented interpretation fills them. Independent hostile audit of the exact committed candidate is the next batch; this implementation pass does not perform that audit.
 
-Remaining evidence: capture/archive a real live play confirming required currency; confirm any official discrepancy via an intentional protocol correction rather than a dual parser. No real-provider qualification, independent hostile audit, SL-Engine binding, H2-C/H2-D or commercial approval is claimed. Next batch is independent hostile audit of this exact SDK candidate.
+## Qualification (2026-10-10)
 
-### Implementation qualification (2026-10-10)
+Fresh final-candidate qualification was captured after the source/type changes; STAKE-SDK-1 test results are historical and not inherited. Permanent tests protect governed rejection, exact round narrowing/recovery, zero-payout completion, journal version fences, codec data law, immutable failure/public facts and exact wire bodies. Existing HTTP/browser/consumer lifecycle proof remains in the canonical lanes. Doctor stays static; pack:verify reuses consumer/package proof.
 
 | Command | Result |
 |---|---|
-| npm run build | PASS (ESM and DTS) |
-| npm run typecheck | PASS (including public live/replay type assertions) |
+| npm run build | PASS (ESM/DTS) |
+| npm run typecheck | PASS (strict source/tests/examples) |
 | npm run lint | PASS |
 | npm run doctor | PASS (static only) |
-| npm test | PASS (70 behavior tests) |
-| npm run test:integration | PASS (1 real local HTTP/platform-fetch scenario) |
+| npm test | PASS (90 behavior tests) |
+| npm run test:integration | PASS (real local HTTP/platform fetch) |
 | npm run test:browser | PASS (4 Chromium scenarios) |
-| npm run test:consumer | PASS (external installed tarball, DTS compile, ESM execution, private-export denial) |
-| npm run pack:verify | PASS (delegates to the same package/consumer proof) |
+| npm run test:consumer | PASS (installed tarball, exact public DTS/ESM, private export denial) |
+| npm run pack:verify | PASS (same canonical installed-package proof) |
+| Focused tests/types.ts strict compilation | PASS (15 intentional negative proofs plus positive narrowing) |
 | git diff --check | PASS |
-| real Stake live transaction | NOT RUN (no credentials or archived new live transaction) |
-| independent hostile audit | NOT RUN (next batch) |
-| SL-Engine H2-C/H2-D | NOT RUN (explicitly deferred) |
+| Independent hostile audit | NOT RUN (next batch) |
+| Real Stake transaction/commercial certification | NOT RUN |
 
-These results qualify only this standalone implementation's local mocked-provider envelope. Chromium tests execute native browser modules/HTTP and cross-tab behavior; they are not real-provider or commercial certification. Final candidate is identified by the repository implementation commit, not by a mutable test-count claim.
+Final source integrity: 38 explicit unknown occurrences (validation boundaries only); 2 local Record<string, unknown> type occurrences in fields; 1 object type for the cycle-validation WeakSet; zero explicit any, Record<string, any>, Partial, double casts, ts-ignore, production ts-expect-error or non-null assertions. The 15 ts-expect-error comments exist only in tests/types.ts. Validated brand introduction uses single assertions; no unchecked provider-to-domain assertion exists. The full delivery report enumerates symbols/locations and the public inventory outside this repository.
+
+No real-provider transaction, independent hostile audit, commercial certification/freeze or SL-Engine recertification was run or claimed.

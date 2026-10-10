@@ -1,4 +1,4 @@
-import { parseStakeLaunch, createStakeLiveClient, stakeAmountMicros, StakeSdkError } from '../src/index.js';
+import { stakeBetMode, stakeEventId, parseStakeLaunch, createStakeLiveClient, stakeAmountMicros, StakeSdkError } from '../src/index.js';
 import type { StakeGameStateCodec, StakeLiveClient } from '../src/index.js';
 interface GameState { readonly steps: readonly number[] }
 const codec: StakeGameStateCodec<GameState> = { parse(input) {
@@ -16,10 +16,10 @@ export async function runLaunch(url: URL, signal: AbortSignal): Promise<StakeLiv
     const session = await client.authenticate({ signal });
     const recovered = session.round;
     if (recovered?.active) return client; // The application presents/restores the existing state before new play.
-    const result = await client.play({ amount: stakeAmountMicros(session.config.defaultBetAmount), mode: 'BASE' }, { signal });
+    const result = await client.play({ amount: stakeAmountMicros(session.config.defaultBetAmount), mode: stakeBetMode('BASE') }, { signal });
     // Application presents result.round.state, then chooses its own checkpoint.
     if (result.round.active) {
-      await client.recordEvent(result.round.betID, 'application:presented', { signal });
+      await client.recordEvent(result.round.betID, stakeEventId('application:presented'), { signal });
       await client.endRound(result.round.betID, { signal });
     }
     return client;

@@ -1,4 +1,4 @@
-import { parseStakeLaunch, createStakeLiveClient, createStakeReplayClient } from '../src/index.js';
+import { parseStakeLaunch, createStakeLiveClient, createStakeReplayClient, stakeBetId } from '../src/index.js';
 import type { StakeGameStateCodec, StakeLiveClientOptions } from '../src/index.js';
 export interface State { readonly value: number }
 export const codec: StakeGameStateCodec<State> = { parse(input) {
@@ -6,9 +6,10 @@ export const codec: StakeGameStateCodec<State> = { parse(input) {
   return { value: input.value };
 } };
 export const balance = { amount: 10_000_000, currency: 'USD' };
+export const jurisdiction = { socialCasino: false, disabledFullscreen: false, disabledTurbo: false, disabledSuperTurbo: false, disabledAutoplay: false, disabledSlamstop: false, disabledSpacebar: false, disabledBuyFeature: false, displayNetPosition: false, displayRTP: false, displaySessionTimer: false, minimumRoundDuration: 0 };
 export const config = { minBet: 100_000, maxBet: 10_000_000, stepBet: 100_000,
-  defaultBetLevel: 1_000_000, betLevels: [100_000, 1_000_000, 10_000_000] };
-export const round = { betID: 'fake-round-1', amount: 1_000_000, active: true, mode: 'BASE',
+  defaultBetLevel: 1_000_000, betLevels: [100_000, 1_000_000, 10_000_000], jurisdiction };
+export const round = { betID: stakeBetId('fake-round-1'), amount: 1_000_000, active: true, mode: 'BASE',
   state: { value: 7 }, payout: 2_000_000, payoutMultiplier: 2 };
 export const auth = { balance, config, round: null };
 export const played = { balance, round };

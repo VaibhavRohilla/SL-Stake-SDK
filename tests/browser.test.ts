@@ -13,11 +13,11 @@ test('native browser HTTP live flow and isolated replay', async ({ page }) => {
     const launch = sdk.parseStakeLaunch(`?sessionID=fake-browser&rgs_url=${location.origin}`, { allowHttp: true });
     if (launch.kind !== 'LIVE') throw new Error('launch');
     const a = sdk.createStakeLiveClient({ launch, codec });
-    const b = sdk.createStakeLiveClient({ launch: { ...launch, sessionID: 'fake-independent' }, codec });
+    const b = sdk.createStakeLiveClient({ launch: { ...launch, sessionID: sdk.stakeSessionId('fake-independent') }, codec });
     const session = await a.authenticate(); await b.authenticate();
-    const played = await a.play({ amount: session.config.defaultBetAmount, mode: 'BASE' });
-    await a.recordEvent(played.round.betID, 'checkpoint'); await a.endRound(played.round.betID); a.destroy();
-    const independent = await b.play({ amount: session.config.defaultBetAmount, mode: 'BASE' }); b.destroy();
+    const played = await a.play({ amount: session.config.defaultBetAmount, mode: sdk.stakeBetMode('BASE') });
+    await a.recordEvent(played.round.betID, sdk.stakeEventId('checkpoint')); await a.endRound(played.round.betID); a.destroy();
+    const independent = await b.play({ amount: session.config.defaultBetAmount, mode: sdk.stakeBetMode('BASE') }); b.destroy();
     const replayLaunch = sdk.parseStakeLaunch(`?replay=true&rgs_url=${location.origin}&game=fake&version=1&mode=BASE&event=1`, { allowHttp: true });
     if (replayLaunch.kind !== 'REPLAY') throw new Error('launch');
     const replay = sdk.createStakeReplayClient({ launch: replayLaunch, codec }); const replayed = await replay.acquire(); replay.destroy();
@@ -33,8 +33,8 @@ test('browser AbortSignal, timeout and late response fencing across operations',
     if (launch.kind !== 'LIVE') throw new Error('launch');
     const codec = { parse(input: unknown) { if (typeof input !== 'number') throw new Error('state'); return input; } };
     const balance = { amount: 10_000_000, currency: 'USD' };
-    const config = { minBet: 100_000, maxBet: 10_000_000, stepBet: 100_000, defaultBetLevel: 1_000_000, betLevels: [1_000_000] };
-    const round = { betID: 'fake-held-round', amount: 1_000_000, active: true, mode: 'BASE', state: 7 };
+    const config = { minBet: 100_000, maxBet: 10_000_000, stepBet: 100_000, defaultBetLevel: 1_000_000, betLevels: [1_000_000], jurisdiction: { socialCasino: false, disabledFullscreen: false, disabledTurbo: false, disabledSuperTurbo: false, disabledAutoplay: false, disabledSlamstop: false, disabledSpacebar: false, disabledBuyFeature: false, displayNetPosition: false, displayRTP: false, displaySessionTimer: false, minimumRoundDuration: 0 } };
+    const round = { betID: sdk.stakeBetId('fake-held-round'), amount: 1_000_000, active: true, mode: sdk.stakeBetMode('BASE'), state: 7 };
     const categories: string[] = [];
     for (const operation of ['AUTH', 'PLAY', 'ACTIVE', 'EVENT', 'END']) {
       let release: (response: Response) => void = () => { throw new Error('pending'); };
@@ -43,11 +43,11 @@ test('browser AbortSignal, timeout and late response fencing across operations',
         ? Response.json({ balance, config, round: operation === 'PLAY' ? null : round }) : held;
       const client = sdk.createStakeLiveClient({ launch, codec, fetch: fetchImpl });
       if (operation !== 'AUTH') await client.authenticate();
-      const pending = operation === 'AUTH' ? client.authenticate() : operation === 'PLAY' ? client.play({ amount: sdk.stakeAmountMicros(1_000_000), mode: 'BASE' })
-        : operation === 'ACTIVE' ? client.getActiveRound() : operation === 'EVENT' ? client.recordEvent(round.betID, 'checkpoint') : client.endRound(round.betID);
+      const pending = operation === 'AUTH' ? client.authenticate() : operation === 'PLAY' ? client.play({ amount: sdk.stakeAmountMicros(1_000_000), mode: sdk.stakeBetMode('BASE') })
+        : operation === 'ACTIVE' ? client.getActiveRound() : operation === 'EVENT' ? client.recordEvent(round.betID, sdk.stakeEventId('checkpoint')) : client.endRound(round.betID);
       await Promise.resolve(); client.destroy();
       try { await pending; throw new Error('unexpected success'); }
-      catch (error) { if (!(error instanceof sdk.StakeSdkError)) throw error; categories.push(error.reason ?? error.category); }
+      catch (error) { if (!(error instanceof sdk.StakeSdkError)) throw error; categories.push(error.failure.category === sdk.STAKE_ERROR_CATEGORY.AMBIGUOUS_PAID_DISPATCH && error.failure.code === sdk.STAKE_ERROR_CODE.PAID_DISPATCH_UNCERTAIN ? error.failure.reason.category : error.category); }
       release(Response.json({ balance, config, round })); await Promise.resolve();
       if (client.session !== undefined) throw new Error('late publication');
     }
@@ -91,7 +91,7 @@ test('browser journal survives client recreation and replay never leases', async
     const fetchImpl: typeof fetch = async (url, init) => { if (String(url).endsWith('/play')) throw new Error('fake network uncertainty'); return fetch(url, init); };
     window.fixtureClient = sdk.createStakeLiveClient({ launch, codec, fetch: fetchImpl, sessionLease: { kind: 'WEB_LOCKS' } });
     const session = await window.fixtureClient.authenticate();
-    try { await window.fixtureClient.play({ amount: session.config.defaultBetAmount, mode: 'BASE' }); throw new Error('unexpected'); }
+    try { await window.fixtureClient.play({ amount: session.config.defaultBetAmount, mode: sdk.stakeBetMode('BASE') }); throw new Error('unexpected'); }
     catch (error) { if (!(error instanceof sdk.StakeSdkError) || error.category !== 'AMBIGUOUS_PAID_DISPATCH') throw error; }
   });
   await first.close();
@@ -103,7 +103,7 @@ test('browser journal survives client recreation and replay never leases', async
     const fetchImpl: typeof fetch = async (url, init) => { requests++; return fetch(url, init); };
     const client = sdk.createStakeLiveClient({ launch, codec, fetch: fetchImpl, sessionLease: { kind: 'WEB_LOCKS' } });
     const session = await client.authenticate(); let blocked = '';
-    try { await client.play({ amount: session.config.defaultBetAmount, mode: 'BASE' }); } catch (error) { if (!(error instanceof sdk.StakeSdkError)) throw error; blocked = error.code; }
+    try { await client.play({ amount: session.config.defaultBetAmount, mode: sdk.stakeBetMode('BASE') }); } catch (error) { if (!(error instanceof sdk.StakeSdkError)) throw error; blocked = error.code; }
     const before = (await navigator.locks.query()).held?.length;
     const replayLaunch = sdk.parseStakeLaunch(`?replay=true&rgs_url=${location.origin}&game=fake&version=1&mode=BASE&event=1`, { allowHttp: true });
     if (replayLaunch.kind !== 'REPLAY') throw new Error('launch');
